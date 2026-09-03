@@ -1,0 +1,31 @@
+{{define "layout"}}<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} · agentgate</title>
+  <link rel="stylesheet" href="/static/pico.min.css">
+  <link rel="stylesheet" href="/static/agentgate.css">
+  <script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<header class="container">
+  <nav>
+    <ul>
+      <li><strong><a href="/" class="brand">agentgate</a></strong></li>
+    </ul>
+    <ul>
+      <li><a href="/" {{if eq .Nav "sessions"}}aria-current="page"{{end}}>Sessions</a></li>
+      <li><a href="/approvals" {{if eq .Nav "approvals"}}aria-current="page"{{end}}>Approvals{{if .PendingCount}} <span class="badge ask">{{.PendingCount}}</span>{{end}}</a></li>
+      <li><a href="/policy" {{if eq .Nav "policy"}}aria-current="page"{{end}}>Policy</a></li>
+    </ul>
+  </nav>
+</header>
+<main class="container">
+  {{block "content" .}}{{end}}
+</main>
+<footer class="container">
+  <small>agentgate {{.Version}} · audit db <code>{{.AuditPath}}</code> · this UI has no authentication, keep it on localhost</small>
+</footer>
+</body>
+</html>{{end}}

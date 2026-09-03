@@ -1,0 +1,52 @@
+{{define "content"}}
+<hgroup>
+  <h1>Sessions</h1>
+  <p>Every connection a host made through agentgate.</p>
+</hgroup>
+
+<div class="stats">
+  <article><h3>{{.Stats.Sessions}}</h3><small>sessions</small></article>
+  <article><h3>{{.Stats.Calls}}</h3><small>calls</small></article>
+  <article><h3>{{.Stats.Denied}}</h3><small>denied</small></article>
+  <article><h3>{{.Stats.Errors}}</h3><small>errors</small></article>
+  <article><h3>{{tokens .Stats.Tokens}}</h3><small>tokens (est.)</small></article>
+</div>
+
+<form role="search" hx-get="/partials/sessions" hx-target="#session-list" hx-trigger="change, submit">
+  <select name="since" aria-label="Time range">
+    <option value="1h" {{if eq .Since "1h"}}selected{{end}}>last hour</option>
+    <option value="24h" {{if eq .Since "24h"}}selected{{end}}>last 24 hours</option>
+    <option value="7d" {{if eq .Since "7d"}}selected{{end}}>last 7 days</option>
+    <option value="" {{if eq .Since ""}}selected{{end}}>everything</option>
+  </select>
+</form>
+
+<div id="session-list">{{template "session-rows" .}}</div>
+{{end}}
+
+{{define "session-rows"}}
+{{if not .Sessions}}
+  <article><p>No sessions recorded yet. Point an MCP host at agentgate and make a tool call.</p></article>
+{{else}}
+<div class="overflow-auto">
+<table>
+  <thead>
+    <tr><th>Started</th><th>Host</th><th>Transport</th><th class="num">Calls</th><th class="num">Denied</th><th>Duration</th><th>Session</th></tr>
+  </thead>
+  <tbody>
+  {{range .Sessions}}
+    <tr>
+      <td><a href="/sessions/{{.ID}}">{{ts .StartedAt}}</a></td>
+      <td>{{if .HostName}}{{.HostName}}{{if .HostVersion}} <small>{{.HostVersion}}</small>{{end}}{{else}}<span class="muted">unknown</span>{{end}}</td>
+      <td><span class="badge">{{or .DownstreamTransport "?"}}</span></td>
+      <td class="num">{{.Calls}}</td>
+      <td class="num">{{if .Denied}}<span class="badge deny">{{.Denied}}</span>{{else}}0{{end}}</td>
+      <td>{{dur .Duration}}{{if not .EndedAt}} <span class="badge live">live</span>{{end}}</td>
+      <td><code class="id">{{short .ID}}</code></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+{{end}}

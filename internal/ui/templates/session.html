@@ -1,0 +1,51 @@
+{{define "content"}}
+<hgroup>
+  <h1>Session <code>{{short .Session.ID}}</code></h1>
+  <p>
+    {{if .Session.HostName}}{{.Session.HostName}} {{.Session.HostVersion}} · {{end}}
+    {{ts .Session.StartedAt}} · {{dur .Session.Duration}} · {{.Session.Calls}} calls
+    {{if .Session.Denied}}· <span class="badge deny">{{.Session.Denied}} denied</span>{{end}}
+  </p>
+</hgroup>
+
+<form role="search" hx-get="/partials/calls" hx-target="#call-list" hx-trigger="change, submit, keyup changed delay:300ms from:input[name='tool']">
+  <input type="hidden" name="session" value="{{.Session.ID}}">
+  <fieldset role="group">
+    <input type="search" name="tool" placeholder="filter by tool" value="{{.Tool}}" aria-label="Filter by tool">
+    <select name="decision" aria-label="Filter by decision">
+      <option value="" {{if eq .Decision ""}}selected{{end}}>any decision</option>
+      <option value="allow" {{if eq .Decision "allow"}}selected{{end}}>allowed</option>
+      <option value="deny" {{if eq .Decision "deny"}}selected{{end}}>denied</option>
+      <option value="ask" {{if eq .Decision "ask"}}selected{{end}}>asked</option>
+    </select>
+  </fieldset>
+</form>
+
+<div id="call-list">{{template "call-rows" .}}</div>
+<p><a href="/">← all sessions</a></p>
+{{end}}
+
+{{define "call-rows"}}
+{{if not .Calls}}
+  <article><p>No calls match.</p></article>
+{{else}}
+{{range .Calls}}
+<details class="call {{.Decision}}">
+  <summary>
+    <span class="badge {{.Decision}}">{{.Decision}}</span>
+    <code class="tool">{{.Tool}}</code>
+    <small class="muted">{{ts .TS}} · {{.DurationMS}} ms · ~{{tokens .TokensEst}} tok</small>
+    {{if .IsError}}<span class="badge error">error</span>{{end}}
+    {{if .RuleID}}<small class="muted">rule {{.RuleID}}</small>{{end}}
+  </summary>
+  {{if .Reason}}<p class="reason">{{.Reason}}</p>{{end}}
+  {{if .Error}}<p class="reason error-text">{{.Error}}</p>{{end}}
+  <h6>Arguments <small class="muted">{{.ArgsHash | short}}</small></h6>
+  <pre><code>{{pretty .Args}}</code></pre>
+  <h6>Result <small class="muted">{{.ResultHash | short}}</small>{{if .ResultTruncated}} <span class="badge">truncated</span>{{end}}</h6>
+  <pre><code>{{pretty .Result}}</code></pre>
+  <p><a href="/calls/{{.ID}}">permalink</a></p>
+</details>
+{{end}}
+{{end}}
+{{end}}

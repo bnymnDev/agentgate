@@ -1,0 +1,61 @@
+{{define "content"}}
+<hgroup>
+  <h1>Policy</h1>
+  <p><code>{{.ConfigPath}}</code> · {{.Summary}}</p>
+</hgroup>
+
+<div id="policy-status">{{template "policy-status" .}}</div>
+
+<div role="group">
+  <button hx-post="/policy/validate" hx-target="#policy-status">Validate file on disk</button>
+  <button hx-post="/policy/reload" hx-target="#policy-status" class="secondary">Reload into the running proxy</button>
+</div>
+
+<h4>Upstreams</h4>
+<div class="overflow-auto">
+<table>
+  <thead><tr><th>Name</th><th>Transport</th><th>Command / URL</th><th>Prefix</th><th>Timeout</th></tr></thead>
+  <tbody>
+  {{range .Upstreams}}
+    <tr>
+      <td><strong>{{.Name}}</strong></td>
+      <td><span class="badge">{{.Transport}}</span></td>
+      <td><code>{{.Target}}</code></td>
+      <td>{{if .Prefix}}<code>{{.Prefix}}</code>{{else}}<span class="muted">none</span>{{end}}</td>
+      <td>{{.Timeout}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+
+<h4>Rules</h4>
+<div class="overflow-auto">
+<table>
+  <thead><tr><th>#</th><th>Id</th><th>Tool</th><th>Conditions</th><th>Action</th><th>Reason</th></tr></thead>
+  <tbody>
+  {{range $i, $r := .Rules}}
+    <tr>
+      <td class="num">{{$i}}</td>
+      <td><code>{{$r.ID}}</code></td>
+      <td><code>{{or $r.Tool "*"}}</code></td>
+      <td>{{range $r.When}}<div><code>{{.Path}}</code> {{.Summary}}</div>{{else}}<span class="muted">always</span>{{end}}</td>
+      <td><span class="badge {{$r.Action}}">{{$r.Action}}</span></td>
+      <td><small>{{$r.Reason}}</small></td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+
+<h4>File</h4>
+<pre><code>{{.Source}}</code></pre>
+{{end}}
+
+{{define "policy-status"}}
+{{if .Error}}
+  <article class="status bad"><strong>Invalid.</strong><pre><code>{{.Error}}</code></pre></article>
+{{else if .Message}}
+  <article class="status good">{{.Message}}</article>
+{{end}}
+{{end}}
