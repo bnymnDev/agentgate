@@ -1,0 +1,80 @@
+# goreleaser configuration — https://goreleaser.com
+version: 2
+
+project_name: agentgate
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: agentgate
+    main: ./cmd/agentgate
+    binary: agentgate
+    env:
+      # Pure Go all the way down: modernc.org/sqlite needs no cgo, so the
+      # binaries cross-compile and run anywhere without a libc to match.
+      - CGO_ENABLED=0
+    goos: [linux, darwin, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.ShortCommit}}
+      - -X main.date={{.Date}}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+      - docs/**/*
+      - src: testdata/policies/default.yaml
+        dst: examples/agentgate.yaml
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^feat'
+      order: 0
+    - title: Fixes
+      regexp: '^fix'
+      order: 1
+    - title: Everything else
+      order: 99
+  filters:
+    exclude:
+      - '^docs:'
+      - '^test:'
+      - '^chore:'
+
+brews:
+  - name: agentgate
+    repository:
+      owner: bnymnDev
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    homepage: https://github.com/bnymnDev/agentgate
+    description: Firewall and flight recorder for your AI agent's tools
+    license: GPL-3.0-or-later
+    skip_upload: auto
+    test: |
+      system "#{bin}/agentgate", "--version"
+
+release:
+  footer: |
+    ## Install
+
+    ```
+    brew install bnymnDev/tap/agentgate
+    go install github.com/bnymnDev/agentgate/cmd/agentgate@{{ .Tag }}
+    ```
