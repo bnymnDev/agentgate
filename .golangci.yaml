@@ -1,0 +1,40 @@
+version: "2"
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - errorlint
+    - misspell
+    - nolintlint
+    - revive
+    - unconvert
+    - usestdlibvars
+  settings:
+    errcheck:
+      # Writing to stdout, closing a read-only handle in a defer and rolling a
+      # transaction back after it already failed are not error paths.
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*database/sql.Rows).Close
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.DB).Close
+        - (*text/tabwriter.Writer).Flush
+    revive:
+      rules:
+        - name: exported
+          disabled: false
+  exclusions:
+    rules:
+      # Table-driven tests and fixtures repeat themselves on purpose.
+      - path: _test\.go
+        linters: [errcheck, revive]
+      # The demo server is a fixture, not a product.
+      - path: testdata/
+        linters: [revive]
+
+formatters:
+  enable:
+    - gofmt
