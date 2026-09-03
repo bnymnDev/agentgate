@@ -1,0 +1,45 @@
+# The config `make dev` uses: the demo server behind a policy with one rule of
+# each kind, so every code path is reachable from a browser in one command.
+version: 1
+call_timeout: 30s
+
+approval:
+  mode: auto
+  timeout: 60s
+
+audit:
+  path: ./.agentgate/audit.db
+  retention: 7d
+  redact:
+    - '(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*\S+'
+
+upstreams:
+  - name: demo
+    stdio: ["${AGENTGATE_ECHO}"]
+    prefix: true
+
+policy:
+  default: allow
+  budget:
+    calls_per_session: 100
+    calls_per_tool:
+      demo.slow: 5
+  rules:
+    - id: no-destructive-shell
+      tool: "demo.exec"
+      when:
+        args.command: { regex: '\brm\s+-rf|\bgit\s+push\s+--force|\bcurl\b.*\|\s*sh' }
+      action: deny
+      reason: "destructive shell command"
+
+    - id: writes-stay-in-tmp
+      tool: "demo.write_file"
+      when:
+        args.path: { not_prefix: "/tmp/" }
+      action: ask
+      reason: "this would write outside /tmp"
+
+    - id: reads-are-fine
+      tool: "demo.read_file|demo.echo|demo.add"
+      action: allow
+      reason: "read-only tools"

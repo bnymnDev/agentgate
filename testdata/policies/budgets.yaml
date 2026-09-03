@@ -1,0 +1,16 @@
+# Budgets are checked before the rules, so an explicit allow cannot lift one.
+version: 1
+upstreams:
+  - name: fs
+    stdio: ["testdata/servers/echo"]
+policy:
+  default: allow
+  budget:
+    calls_per_session: 3
+    calls_per_tool:
+      fs.write_file: 2
+  rules:
+    - id: always-allow-writes
+      tool: "fs__write_file"
+      action: allow
+      reason: "writes are explicitly allowed by this policy"
