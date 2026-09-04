@@ -1,0 +1,100 @@
+# One rule per matcher, so the golden file documents what each one does.
+version: 1
+upstreams:
+  - name: t
+    stdio: ["testdata/servers/echo"]
+    prefix: true
+policy:
+  default: allow
+  rules:
+    - id: equals
+      tool: "t.equals"
+      when: { args.mode: { equals: "live" } }
+      action: deny
+
+    - id: shorthand-equals
+      tool: "t.shorthand"
+      when: { args.mode: "live" }
+      action: deny
+
+    - id: not-equals
+      tool: "t.not_equals"
+      when: { args.mode: { not_equals: "dry" } }
+      action: deny
+
+    - id: regex
+      tool: "t.regex"
+      when: { args.cmd: { regex: 'rm\s+-rf' } }
+      action: deny
+
+    - id: prefix
+      tool: "t.prefix"
+      when: { args.path: { prefix: "/etc/" } }
+      action: deny
+
+    - id: not-prefix
+      tool: "t.not_prefix"
+      when: { args.path: { not_prefix: "/srv/app/" } }
+      action: deny
+
+    - id: in
+      tool: "t.in"
+      when: { args.env: { in: ["prod", "staging"] } }
+      action: deny
+
+    - id: shorthand-in
+      tool: "t.shorthand_in"
+      when: { args.env: ["prod", "staging"] }
+      action: deny
+
+    - id: gt
+      tool: "t.gt"
+      when: { args.amount: { gt: 100 } }
+      action: deny
+
+    - id: range
+      tool: "t.range"
+      when: { args.amount: { gt: 10, lt: 20 } }
+      action: deny
+
+    - id: exists
+      tool: "t.exists"
+      when: { args.force: { exists: true } }
+      action: deny
+
+    - id: absent
+      tool: "t.absent"
+      when: { args.dryRun: { exists: false } }
+      action: deny
+
+    - id: wildcard-array
+      tool: "t.array"
+      when: { "args.items[*].sku": { prefix: "BAD-" } }
+      action: deny
+
+    - id: wildcard-array-all
+      tool: "t.array_all"
+      when: { "args.items[*].sku": { not_prefix: "OK-" } }
+      action: deny
+
+    - id: nested
+      tool: "t.nested"
+      when: { args.target.host: { equals: "prod.example.com" } }
+      action: deny
+
+    - id: indexed
+      tool: "t.indexed"
+      when: { "args.items[0]": { equals: "first" } }
+      action: deny
+
+    - id: two-conditions
+      tool: "t.both"
+      when:
+        args.env: { equals: "prod" }
+        args.force: { equals: true }
+      action: deny
+
+    - id: on-tool-name
+      tool: "*"
+      when: { tool_name: { prefix: "danger_" } }
+      action: deny

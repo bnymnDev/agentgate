@@ -1,0 +1,15 @@
+{
+  "policy": "default",
+  "calls": [
+    {"tool": "shell__exec", "upstream": "shell", "tool_name": "exec", "args": {"command": "ls -la"}},
+    {"tool": "shell__exec", "upstream": "shell", "tool_name": "exec", "args": {"command": "rm -rf /"}},
+    {"tool": "shell__exec", "upstream": "shell", "tool_name": "exec", "args": {"command": "git push --force origin main"}},
+    {"tool": "fs__write_file", "upstream": "fs", "tool_name": "write_file", "args": {"path": "/home/me/repo/main.go", "contents": "package main"}},
+    {"tool": "fs__write_file", "upstream": "fs", "tool_name": "write_file", "args": {"path": "/etc/passwd", "contents": "nope"}},
+    {"tool": "fs__read_file", "upstream": "fs", "tool_name": "read_file", "args": {"path": "/etc/passwd"}},
+    {"tool": "shopware__products_search", "upstream": "shopware", "tool_name": "products_search", "args": {"q": "shoes"}},
+    {"tool": "shopware__stock_set", "upstream": "shopware", "tool_name": "stock_set", "args": {"sku": "A1", "stock": 0, "dryRun": false}},
+    {"tool": "shopware__stock_set", "upstream": "shopware", "tool_name": "stock_set", "args": {"sku": "A1", "stock": 0, "dryRun": true}},
+    {"tool": "shopware__order_get", "upstream": "shopware", "tool_name": "order_get", "args": {"id": "1"}}
+  ]
+}

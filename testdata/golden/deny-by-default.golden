@@ -1,0 +1,6 @@
+ 0  allow  fs__read_file                   allow-reads                   reading is always fine
+ 1  allow  fs__list_directory              allow-reads                   reading is always fine
+ 2  deny   fs__write_file                  -                             default deny
+ 3  allow  shell__exec                     allow-safe-shell              known safe command
+ 4  deny   shell__exec                     -                             default deny
+ 5  deny   unknown__tool                   -                             default deny

@@ -1,0 +1,32 @@
+{{define "content"}}
+<hgroup>
+  <h1>Approvals</h1>
+  <p>Calls a rule marked <code>ask</code>. They are waiting right now — the agent is blocked until you answer or the timeout runs out.</p>
+</hgroup>
+<div id="approval-list" hx-get="/partials/approvals" hx-trigger="every 2s" hx-swap="innerHTML">
+  {{template "approval-rows" .}}
+</div>
+{{end}}
+
+{{define "approval-rows"}}
+{{if not .Pending}}
+  <article><p class="muted">Nothing waiting.</p></article>
+{{else}}
+{{range .Pending}}
+<article class="approval">
+  <header>
+    <code class="tool">{{.Request.Tool}}</code>
+    <small class="muted">session {{short .Request.SessionID}} · rule {{.Request.Decision.RuleID}}{{if .Countdown}} · {{.Countdown}} left{{end}}</small>
+  </header>
+  <p>{{.Request.Decision.Reason}}</p>
+  <pre><code>{{pretty .Request.Args}}</code></pre>
+  <footer>
+    <div role="group">
+      <button hx-post="/approvals/{{.ID}}/allow" hx-target="#approval-list">Allow once</button>
+      <button hx-post="/approvals/{{.ID}}/deny" hx-target="#approval-list" class="secondary">Deny</button>
+    </div>
+  </footer>
+</article>
+{{end}}
+{{end}}
+{{end}}

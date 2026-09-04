@@ -1,0 +1,20 @@
+# The locked-down shape: nothing runs unless a rule says so.
+version: 1
+upstreams:
+  - name: fs
+    stdio: ["testdata/servers/echo"]
+  - name: shell
+    stdio: ["testdata/servers/echo"]
+policy:
+  default: deny
+  rules:
+    - id: allow-reads
+      tool: "fs__read_file|fs__list_directory"
+      action: allow
+      reason: "reading is always fine"
+    - id: allow-safe-shell
+      tool: "shell__exec"
+      when:
+        args.command: { regex: '^(ls|cat|git status)\b' }
+      action: allow
+      reason: "known safe command"

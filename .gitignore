@@ -1,0 +1,16 @@
+# build output
+/bin/
+/dist/
+coverage.out
+
+# local run state
+/.agentgate/
+*.db
+*.db-shm
+*.db-wal
+
+# editors
+.idea/
+.vscode/
+*.swp
+.DS_Store

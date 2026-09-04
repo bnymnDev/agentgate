@@ -1,0 +1,10 @@
+ 0  allow  shell__exec                     -                             default allow
+ 1  deny   shell__exec                     no-destructive-shell          destructive shell command
+ 2  deny   shell__exec                     no-destructive-shell          destructive shell command
+ 3  allow  fs__write_file                  -                             default allow
+ 4  deny   fs__write_file                  fs-stay-in-repo               writes are confined to the repository
+ 5  allow  fs__read_file                   -                             default allow
+ 6  allow  shopware__products_search       read-only-ok                  matched rule read-only-ok (shopware.*_search|shopware.*_get)
+ 7  ask    shopware__stock_set             shopware-writes-need-approval  this would change live shop data
+ 8  allow  shopware__stock_set             -                             default allow
+ 9  allow  shopware__order_get             read-only-ok                  matched rule read-only-ok (shopware.*_search|shopware.*_get)

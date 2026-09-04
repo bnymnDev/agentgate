@@ -1,0 +1,37 @@
+ 0  deny   t__equals                       equals                        matched rule equals (t.equals)
+ 1  allow  t__equals                       -                             default allow
+ 2  allow  t__equals                       -                             default allow
+ 3  deny   t__shorthand                    shorthand-equals              matched rule shorthand-equals (t.shorthand)
+ 4  deny   t__not_equals                   not-equals                    matched rule not-equals (t.not_equals)
+ 5  allow  t__not_equals                   -                             default allow
+ 6  allow  t__not_equals                   -                             default allow
+ 7  deny   t__regex                        regex                         matched rule regex (t.regex)
+ 8  allow  t__regex                        -                             default allow
+ 9  deny   t__prefix                       prefix                        matched rule prefix (t.prefix)
+10  allow  t__prefix                       -                             default allow
+11  allow  t__not_prefix                   -                             default allow
+12  deny   t__not_prefix                   not-prefix                    matched rule not-prefix (t.not_prefix)
+13  deny   t__in                           in                            matched rule in (t.in)
+14  allow  t__in                           -                             default allow
+15  deny   t__shorthand_in                 shorthand-in                  matched rule shorthand-in (t.shorthand_in)
+16  deny   t__gt                           gt                            matched rule gt (t.gt)
+17  allow  t__gt                           -                             default allow
+18  allow  t__gt                           -                             default allow
+19  deny   t__range                        range                         matched rule range (t.range)
+20  allow  t__range                        -                             default allow
+21  deny   t__exists                       exists                        matched rule exists (t.exists)
+22  allow  t__exists                       -                             default allow
+23  deny   t__absent                       absent                        matched rule absent (t.absent)
+24  allow  t__absent                       -                             default allow
+25  deny   t__array                        wildcard-array                matched rule wildcard-array (t.array)
+26  allow  t__array                        -                             default allow
+27  allow  t__array_all                    -                             default allow
+28  deny   t__array_all                    wildcard-array-all            matched rule wildcard-array-all (t.array_all)
+29  deny   t__nested                       nested                        matched rule nested (t.nested)
+30  allow  t__nested                       -                             default allow
+31  deny   t__indexed                      indexed                       matched rule indexed (t.indexed)
+32  allow  t__indexed                      -                             default allow
+33  deny   t__both                         two-conditions                matched rule two-conditions (t.both)
+34  allow  t__both                         -                             default allow
+35  deny   t__anything                     on-tool-name                  matched rule on-tool-name (*)
+36  allow  t__anything                     -                             default allow

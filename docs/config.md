@@ -1,0 +1,228 @@
+# Configuration
+
+agentgate reads one YAML file. Unknown keys are an error, so a typo is caught by
+`agentgate policy validate` rather than silently ignored at run time.
+
+The file is looked for in this order when `--config` is not given:
+
+1. `./agentgate.yaml`, then `./agentgate.yml`
+2. `~/.agentgate/agentgate.yaml`
+3. `~/.config/agentgate/agentgate.yaml`
+
+## A complete file
+
+```yaml
+version: 1                       # required, must be 1
+
+prefix_separator: "__"           # joins upstream name and tool name
+call_timeout: 120s               # per call, unless an upstream overrides it
+
+approval:
+  mode: auto                     # auto | tty | ui | deny
+  timeout: 60s                   # after this, an unanswered "ask" is denied
+
+audit:
+  enabled: true
+  path: ~/.agentgate/audit.db
+  retention: 30d                 # sessions older than this are pruned on startup
+  max_result_bytes: 262144       # results above this are truncated and flagged
+  builtin_redaction: true        # keep the built-in secret patterns
+  redact:                        # your own patterns, added to the built-in ones
+    - '(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*\S+'
+
+upstreams:
+  - name: fs
+    stdio: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/me/repo"]
+    env: { LOG_LEVEL: "warn" }
+    cwd: /home/me/repo
+    prefix: true
+    timeout: 30s
+
+  - name: shopware
+    stdio: ["npx", "shopware-mcp"]
+    env: { SHOPWARE_URL: "${SHOPWARE_URL}" }
+
+  - name: remote
+    http: https://mcp.example.com/mcp
+    headers: { Authorization: "Bearer ${REMOTE_TOKEN}" }
+    prefix: false
+
+policy:
+  default: allow
+  budget:
+    calls_per_session: 500
+    calls_per_tool:
+      fs.write_file: 50
+  rules: []                      # see docs/policies.md
+```
+
+## Top level
+
+| Field | Default | What it does |
+|---|---|---|
+| `version` | `1` | Config format version. Only `1` exists. |
+| `prefix_separator` | `"__"` | What joins an upstream name to a tool name. See below. |
+| `call_timeout` | `120s` | How long a `tools/call` may take before agentgate gives up. |
+
+Durations accept `d` and `w` on top of what Go understands: `30d`, `2w`, `1h30m`,
+`500ms`.
+
+### Why `__` and not `.`
+
+The MCP specification does not restrict tool-name characters, but several hosts
+inherited the OpenAI function-calling constraint of `^[a-zA-Z0-9_-]{1,64}$`, in
+which a dot is invalid. `__` is safe everywhere, so it is the default.
+
+You never have to care about this when writing rules: a rule pattern is matched
+against both the exposed name and the canonical `upstream.tool` spelling, so
+
+```yaml
+tool: "fs.write_file"     # matches fs__write_file, fs.write_file, fs/write_file…
+```
+
+keeps working whatever the separator is set to.
+
+## `approval`
+
+What happens to a call a rule marked `ask`.
+
+| Mode | Behaviour |
+|---|---|
+| `auto` | Use the web UI if it is running, otherwise the terminal, otherwise deny. The default. |
+| `ui` | Wait for a click in the web UI. Denies if the UI is not running. |
+| `tty` | Prompt on agentgate's terminal. Denies if there is no terminal. |
+| `deny` | Never ask. Every `ask` becomes a deny with a reason that says so. |
+
+In stdio mode stdin and stdout carry MCP traffic, so agentgate opens the
+controlling terminal (`/dev/tty`, `CONIN$` on Windows) for the prompt. If there
+is none — which is the normal case when a host launches agentgate as a
+subprocess — `ask` denies with `approval required, no TTY`. To actually approve
+things, run with `--ui` and use the approvals inbox, or run in `--http` mode.
+
+## `audit`
+
+| Field | Default | What it does |
+|---|---|---|
+| `enabled` | `true` | Set to `false` to run with no audit trail at all. |
+| `path` | `~/.agentgate/audit.db` | SQLite file. `~` and `${ENV}` are expanded; the directory is created. |
+| `retention` | `30d` | Sessions older than this are deleted when agentgate starts. |
+| `max_result_bytes` | `262144` | Results larger than this are stored truncated and flagged. The hash is still of the whole result. |
+| `builtin_redaction` | `true` | Whether the built-in secret patterns apply. |
+| `redact` | *(empty)* | Your own regexes, added to the built-in ones. |
+
+Audit writes are asynchronous and best effort. If the database is unavailable,
+the call still happens; the failure is logged and counted. Auditing can never
+delay or fail a tool call.
+
+### Built-in redaction patterns
+
+These are applied to every recorded call unless `builtin_redaction: false`:
+
+<!-- BEGIN:redactions -->
+```
+(?i)\b(api[_-]?key|apikey|secret|token|password|passwd|pwd|authorization|auth[_-]?token|access[_-]?key|private[_-]?key|client[_-]?secret)\b\s*[:=]\s*\S+
+(?i)\bbearer\s+[A-Za-z0-9\-._~+/]{12,}=*
+\bAKIA[0-9A-Z]{16}\b
+\bgh[pousr]_[A-Za-z0-9]{16,}\b
+\bsk-[A-Za-z0-9]{16,}\b
+\bxox[abprs]-[A-Za-z0-9-]{10,}\b
+-----BEGIN[A-Z ]*PRIVATE KEY-----
+\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b
+```
+<!-- END:redactions -->
+
+How a pattern is applied is described in [architecture.md](architecture.md#redaction).
+
+## `upstreams`
+
+One entry per real MCP server. Exactly one of `stdio` and `http` is required.
+
+| Field | What it does |
+|---|---|
+| `name` | Identifies the upstream in prefixes, rules and the audit log. Required, unique. |
+| `stdio` | Command and arguments, as a list. `${ENV}` is expanded in every element. |
+| `http` | Streamable HTTP endpoint. |
+| `env` | Added to the environment of a stdio server. Values are `${ENV}`-expanded. |
+| `cwd` | Working directory of a stdio server. |
+| `headers` | Sent with every request to an HTTP server. Values are `${ENV}`-expanded. |
+| `prefix` | Whether to prefix this server's tools. Defaults to `false` for a single upstream and `true` for several. |
+| `timeout` | Overrides `call_timeout` for this server. |
+
+`${VAR}` and `$VAR` are expanded from agentgate's own environment in `stdio`
+arguments, `env` values, `headers` values, `http` and `audit.path` — and nowhere
+else, so a `$` in a policy regex means what it says.
+
+An upstream that fails to connect is logged and skipped; the rest still come up.
+agentgate only refuses to start when *no* upstream can be reached.
+
+## `policy`
+
+See [policies.md](policies.md).
+
+## CLI flags
+
+<!-- BEGIN:flags -->
+### Global flags
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--log-level` | log level: debug, info, warn or error | `info` |
+| `-c, --config` | path to agentgate.yaml (default: ./agentgate.yaml, then ~/.agentgate/agentgate.yaml) |  |
+
+### `check [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--args` | tool arguments as a JSON object |  |
+| `--calls-so-far` | pretend this many calls were already made, to test budgets | `0` |
+| `--json` | print the call and the decision as JSON |  |
+| `--tool` | tool name as the host sees it, prefix included |  |
+
+### `diff <session-a> <session-b> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--all` | also list calls that are identical |  |
+| `--json` | print the diff as JSON |  |
+
+### `replay <session-id> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--dry-run` | only re-evaluate the policy, send nothing |  |
+| `--json` | print the report as JSON |  |
+| `--only-allowed` | skip calls that were denied when they were recorded |  |
+
+### `run [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--allow-remote-ui` | allow the web UI to bind to a non-loopback address (it has no authentication) |  |
+| `--http` | serve MCP over Streamable HTTP on this address, e.g. :3333 |  |
+| `--stdio` | serve MCP on stdin/stdout (the default) |  |
+| `--ui` | also serve the web UI on this address, e.g. 127.0.0.1:7777 |  |
+
+### `sessions [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print as JSON |  |
+| `--limit` | maximum number of sessions to list | `50` |
+| `--since` | only sessions started within this window, e.g. 24h or 7d |  |
+
+### `show <session-id> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--args` | show the arguments instead of the reason |  |
+| `--decision` | only calls with this decision: allow, deny or ask |  |
+| `--json` | print as JSON |  |
+| `--tool` | only calls whose tool name contains this |  |
+
+### `ui [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--addr` | address to listen on | `127.0.0.1:7777` |
+| `--allow-remote-ui` | allow binding to a non-loopback address (the UI has no authentication) |  |
+<!-- END:flags -->

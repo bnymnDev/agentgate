@@ -1,0 +1,50 @@
+# The policy the README and `make dev` use. It is also the first golden case:
+# a permissive default with a few hard stops.
+version: 1
+prefix_separator: "__"
+
+audit:
+  path: ./.agentgate/audit.db
+  retention: 30d
+  redact:
+    - '(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*\S+'
+
+upstreams:
+  - name: shell
+    stdio: ["testdata/servers/echo"]
+  - name: fs
+    stdio: ["testdata/servers/echo"]
+  - name: shopware
+    stdio: ["testdata/servers/echo"]
+
+policy:
+  default: allow
+  budget:
+    calls_per_session: 500
+    calls_per_tool:
+      fs.write_file: 50
+  rules:
+    - id: no-destructive-shell
+      tool: "shell.*"
+      when:
+        args.command: { regex: '\brm\s+-rf|\bgit\s+push\s+--force' }
+      action: deny
+      reason: "destructive shell command"
+
+    - id: fs-stay-in-repo
+      tool: "fs.write_file"
+      when:
+        args.path: { not_prefix: "/home/me/repo/" }
+      action: deny
+      reason: "writes are confined to the repository"
+
+    - id: shopware-writes-need-approval
+      tool: "shopware.*"
+      when:
+        args.dryRun: { equals: false }
+      action: ask
+      reason: "this would change live shop data"
+
+    - id: read-only-ok
+      tool: "shopware.*_search|shopware.*_get"
+      action: allow

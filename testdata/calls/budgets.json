@@ -1,0 +1,10 @@
+{
+  "policy": "budgets",
+  "calls": [
+    {"tool": "fs__write_file", "upstream": "fs", "tool_name": "write_file", "args": {}, "counts": {"session": 0, "tool": 0}},
+    {"tool": "fs__write_file", "upstream": "fs", "tool_name": "write_file", "args": {}, "counts": {"session": 1, "tool": 1}},
+    {"tool": "fs__write_file", "upstream": "fs", "tool_name": "write_file", "args": {}, "counts": {"session": 2, "tool": 2}},
+    {"tool": "fs__read_file", "upstream": "fs", "tool_name": "read_file", "args": {}, "counts": {"session": 2, "tool": 0}},
+    {"tool": "fs__read_file", "upstream": "fs", "tool_name": "read_file", "args": {}, "counts": {"session": 3, "tool": 1}}
+  ]
+}

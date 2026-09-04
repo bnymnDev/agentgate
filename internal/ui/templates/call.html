@@ -1,0 +1,17 @@
+{{define "content"}}
+<hgroup>
+  <h1><code class="tool">{{.Call.Tool}}</code></h1>
+  <p>
+    <span class="badge {{.Call.Decision}}">{{.Call.Decision}}</span>
+    {{ts .Call.TS}} · {{.Call.DurationMS}} ms · upstream <strong>{{.Call.Upstream}}</strong>
+    {{if .Call.RuleID}}· rule <code>{{.Call.RuleID}}</code>{{end}}
+  </p>
+</hgroup>
+{{if .Call.Reason}}<blockquote>{{.Call.Reason}}</blockquote>{{end}}
+{{if .Call.Error}}<blockquote class="error-text">{{.Call.Error}}</blockquote>{{end}}
+<h4>Arguments <small class="muted">sha256 {{short .Call.ArgsHash}}</small></h4>
+<pre><code>{{pretty .Call.Args}}</code></pre>
+<h4>Result <small class="muted">sha256 {{short .Call.ResultHash}}</small>{{if .Call.ResultTruncated}} <span class="badge">truncated</span>{{end}}</h4>
+<pre><code>{{pretty .Call.Result}}</code></pre>
+<p><a href="/sessions/{{.Call.SessionID}}">← session {{short .Call.SessionID}}</a></p>
+{{end}}
