@@ -127,7 +127,8 @@ func dsn(path string, readOnly bool) string {
 	if readOnly {
 		q.Set("mode", "ro")
 	}
-	return "file:" + path + "?" + q.Encode()
+	// SQLite URIs want forward slashes even on Windows.
+	return "file:" + filepath.ToSlash(path) + "?" + q.Encode()
 }
 
 // run drains the write queue until Close.

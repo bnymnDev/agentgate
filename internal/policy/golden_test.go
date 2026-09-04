@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -16,6 +18,11 @@ import (
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files")
+
+// time.* conditions read the call's timestamp in local time, which is what a
+// policy author expects. The golden files must not depend on where the tests
+// happen to run, so they are evaluated in UTC.
+func init() { time.Local = time.UTC }
 
 // testdata layout:
 //
@@ -65,7 +72,9 @@ func TestGoldenDecisions(t *testing.T) {
 			}
 			want, err := os.ReadFile(goldenPath)
 			require.NoError(t, err, "missing golden file; run go test ./internal/policy -update")
-			require.Equal(t, string(want), got.String(),
+			// Line endings are normalised so that a checkout with autocrlf on
+			// compares decisions, not carriage returns.
+			require.Equal(t, strings.ReplaceAll(string(want), "\r\n", "\n"), got.String(),
 				"decisions changed for %s; run go test ./internal/policy -update and review the diff", name)
 		})
 	}
