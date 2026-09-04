@@ -80,7 +80,7 @@ func commandTable(root *cobra.Command) string {
 		if c == root || c.Hidden || c.Name() == "help" || c.Name() == "completion" {
 			return
 		}
-		b.WriteString(fmt.Sprintf("| `%s` | %s |\n", useLine(c), c.Short))
+		fmt.Fprintf(&b, "| `%s` | %s |\n", useLine(c), c.Short)
 	})
 	return b.String()
 }
@@ -97,7 +97,7 @@ func flagSections(root *cobra.Command) string {
 		if !c.LocalNonPersistentFlags().HasFlags() {
 			return
 		}
-		b.WriteString(fmt.Sprintf("\n### `%s`\n\n", useLine(c)))
+		fmt.Fprintf(&b, "\n### `%s`\n\n", useLine(c))
 		b.WriteString(flagTable(c.LocalNonPersistentFlags()))
 	})
 	return b.String()
@@ -156,7 +156,7 @@ func matcherTable() string {
 	var b strings.Builder
 	b.WriteString("| Matcher | Holds when | Example |\n|---|---|---|\n")
 	for _, r := range rows {
-		b.WriteString(fmt.Sprintf("| %s | %s | <code>%s</code> |\n", r[0], r[1], strings.ReplaceAll(r[2], "|", "\\|")))
+		fmt.Fprintf(&b, "| %s | %s | <code>%s</code> |\n", r[0], r[1], strings.ReplaceAll(r[2], "|", "\\|"))
 	}
 	return b.String()
 }

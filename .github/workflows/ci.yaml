@@ -81,4 +81,6 @@ jobs:
           check-latest: true
       - uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # Pinned so that a linter release cannot turn main red on its own;
+          # bump it on purpose, together with any findings it brings.
+          version: v2.13.2

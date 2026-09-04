@@ -62,11 +62,13 @@ brews:
     repository:
       owner: bnymnDev
       name: homebrew-tap
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
     homepage: https://github.com/bnymnDev/agentgate
-    description: Firewall and flight recorder for your AI agent's tools
+    description: Firewall, kill switch and flight recorder for your AI agent's tools
     license: GPL-3.0-or-later
-    skip_upload: auto
+    # Without a tap token the formula is only written to dist/, so a release
+    # never fails on the Homebrew step; add the secret to publish it.
+    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_TOKEN" "" }}auto{{ else }}true{{ end }}'
     test: |
       system "#{bin}/agentgate", "--version"
 
