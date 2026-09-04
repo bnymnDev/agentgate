@@ -3,9 +3,45 @@
 <p align="center"><strong>Firewall, kill switch and flight recorder for your AI agent's tools.</strong></p>
 
 <p align="center">
-One binary between your MCP host and your MCP servers.<br>
-Every tool call is checked against a policy, recorded, replayable — and stoppable with one command.
+One binary between your AI agent and the tools it uses.<br>
+Every tool call is checked, recorded and replayable. Any of them can be stopped. All of them, with one command.
 </p>
+
+---
+
+## Introducing agentgate
+
+I gave a coding agent access to my shell, my filesystem, my GitHub account and
+a database, and then I watched it work. Most of what it did was fine. Some of
+it was brilliant. And a few times it did something that made me reach for the
+power button: a `git push --force` it had not been asked for, a `rm -rf` on a
+path it had misread, a `DELETE FROM` with a `WHERE` clause it had guessed. It
+had every permission I had, and no idea which of them were dangerous.
+
+That is the state of AI agents today. The Model Context Protocol made it
+trivial to hand a model real tools. Nothing in it says what the model is
+allowed to do with them, nothing records what it did, and nothing stops it
+when it goes wrong. You trust the model, or you do not install the server.
+
+**agentgate is the third option.** It is a small proxy that sits between the
+agent and its tools, speaks MCP on both sides, and gives you what every other
+kind of software with real permissions has had for decades: a policy, an audit
+log, and an off switch.
+
+- **A policy** decides what gets through. Deny `rm -rf`. Ask before anything
+  the server calls destructive. Nothing on GitHub gets deleted. No deploys on
+  Friday afternoon. Rules are plain YAML, and a denied call comes back to the
+  agent as a readable reason, so it adapts instead of retrying.
+- **An audit log** records every call: the arguments, the result, the
+  decision, how long it took. Secrets are scrubbed before they are written.
+  You can replay yesterday's session against a new policy and see what would
+  have changed before you trust it.
+- **An off switch** stops every agent on the machine with one command, without
+  dropping a connection. And a decoy tool — a honeypot — tells you the moment
+  an agent is following instructions you never gave it.
+
+No changes to the agent. No changes to the tools. No cgo, no runtime, no
+cloud. One binary, one YAML file, one line changed in the host config.
 
 ```
   MCP host                 agentgate                    MCP servers
@@ -18,13 +54,24 @@ Every tool call is checked against a policy, recorded, replayable — and stoppa
                          └──────────────────┘
 ```
 
-No changes to the host. No changes to the servers. No cgo, no runtime, no cloud.
+This is what it looks like when it earns its keep:
 
 ![agentgate tail: an agent reads a file, runs the tests, gets denied on rm -rf, trips a honeypot and freezes the gateway; then agentgate status and agentgate unfreeze](docs/demo.gif)
 
 *Real output. The agent read a file, ran the tests, was denied `rm -rf`, then
-called a tool that does not exist — and every agent on the machine was frozen
-until a human looked.*
+called a tool that does not exist — a honeypot — and every agent on the
+machine was frozen until a human looked.*
+
+---
+
+## Who it is for
+
+- **You run a coding agent on your own machine** and want it to keep working
+  while you sleep, without waking up to a rewritten git history.
+- **You ship agents to other people** and need to say, truthfully, what they
+  can and cannot do — and prove it afterwards.
+- **You build MCP servers** and want a way to test what an agent does with them
+  before a customer finds out.
 
 ---
 
