@@ -10,7 +10,7 @@ import (
 //
 //	fs__write_file                    exact name
 //	fs.*                              glob, * and ? are wildcards
-//	shopware.*_search|shopware.*_get  alternation of globs, split on |
+//	github.get_*|github.list_*        alternation of globs, split on |
 //	/^fs__(read|write)_file$/         regular expression, delimited by slashes
 //
 // Globs are anchored: the whole tool name has to match.

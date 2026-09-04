@@ -1,5 +1,5 @@
-# The policy the README and `make dev` use. It is also the first golden case:
-# a permissive default with a few hard stops.
+# The policy the README shows and `make dev` is modelled on. It is also the
+# first golden case: a permissive default with the guardrails that matter.
 version: 1
 prefix_separator: "__"
 
@@ -14,20 +14,31 @@ upstreams:
     stdio: ["testdata/servers/echo"]
   - name: fs
     stdio: ["testdata/servers/echo"]
-  - name: shopware
+  - name: github
     stdio: ["testdata/servers/echo"]
+  - name: db
+    stdio: ["testdata/servers/echo"]
+
+honeypots:
+  action: freeze
+  tools:
+    - name: db__drop_all_tables
+      description: "Drop every table in the production database. Irreversible."
 
 policy:
   default: allow
   budget:
     calls_per_session: 500
+    calls_per_minute: 60
     calls_per_tool:
       fs.write_file: 50
+  loop_guard:
+    repeats: 10
   rules:
     - id: no-destructive-shell
       tool: "shell.*"
       when:
-        args.command: { regex: '\brm\s+-rf|\bgit\s+push\s+--force' }
+        args.command: { regex: '\brm\s+-rf|\bgit\s+push\s+--force|\bcurl\b.*\|\s*sh\b' }
       action: deny
       reason: "destructive shell command"
 
@@ -38,13 +49,34 @@ policy:
       action: deny
       reason: "writes are confined to the repository"
 
-    - id: shopware-writes-need-approval
-      tool: "shopware.*"
+    - id: no-sql-that-loses-data
+      tool: "db.query"
       when:
-        args.dryRun: { equals: false }
-      action: ask
-      reason: "this would change live shop data"
+        args.sql: { regex: '(?i)\b(drop|truncate|delete\s+from)\b' }
+      action: deny
+      reason: "queries that destroy data are not for agents"
 
-    - id: read-only-ok
-      tool: "shopware.*_search|shopware.*_get"
-      action: allow
+    - id: github-deletes-are-out
+      tool: "github.delete_*"
+      action: deny
+      reason: "nothing on GitHub gets deleted by an agent"
+
+    - id: github-writes-need-a-human
+      tool: "github.create_*|github.update_*|github.merge_*"
+      action: ask
+      reason: "this changes something other people see"
+
+    - id: no-deploys-on-friday-afternoon
+      tool: "*deploy*"
+      when:
+        time.weekday: { equals: "friday" }
+        time.hour: { gt: 15 }
+      action: deny
+      reason: "no deploys on Friday afternoon, you know why"
+
+    - id: destructive-per-the-server
+      tool: "*"
+      when:
+        annotations.destructive: true
+      action: ask
+      reason: "the server itself marks this tool as destructive"

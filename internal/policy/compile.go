@@ -24,8 +24,25 @@ func (p *Policy) Compile() error {
 	default:
 		errs = append(errs, fmt.Errorf("policy.default: unknown action %q", p.Default))
 	}
+	switch p.Mode {
+	case "", ModeEnforce, ModeShadow:
+		if p.Mode == "" {
+			p.Mode = ModeEnforce
+		}
+	default:
+		errs = append(errs, fmt.Errorf("policy.mode: unknown mode %q, use enforce or shadow", p.Mode))
+	}
 	if p.Budget.CallsPerSession < 0 {
 		errs = append(errs, errors.New("policy.budget.calls_per_session: must not be negative"))
+	}
+	if p.Budget.CallsPerMinute < 0 {
+		errs = append(errs, errors.New("policy.budget.calls_per_minute: must not be negative"))
+	}
+	if p.Budget.TokensPerSession < 0 {
+		errs = append(errs, errors.New("policy.budget.tokens_per_session: must not be negative"))
+	}
+	if p.LoopGuard.Repeats < 0 {
+		errs = append(errs, errors.New("policy.loop_guard.repeats: must not be negative"))
 	}
 	for tool, limit := range p.Budget.CallsPerTool {
 		if limit < 0 {
@@ -78,6 +95,10 @@ func (p *Policy) Summary() string {
 			asks++
 		}
 	}
-	return fmt.Sprintf("default %s, %d rules (%d allow, %d deny, %d ask)",
+	out := fmt.Sprintf("default %s, %d rules (%d allow, %d deny, %d ask)",
 		p.Default, len(p.Rules), allows, denies, asks)
+	if p.IsShadow() {
+		out += ", shadow mode"
+	}
+	return out
 }

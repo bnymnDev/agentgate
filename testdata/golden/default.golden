@@ -1,10 +1,21 @@
  0  allow  shell__exec                     -                             default allow
  1  deny   shell__exec                     no-destructive-shell          destructive shell command
  2  deny   shell__exec                     no-destructive-shell          destructive shell command
- 3  allow  fs__write_file                  -                             default allow
- 4  deny   fs__write_file                  fs-stay-in-repo               writes are confined to the repository
- 5  allow  fs__read_file                   -                             default allow
- 6  allow  shopware__products_search       read-only-ok                  matched rule read-only-ok (shopware.*_search|shopware.*_get)
- 7  ask    shopware__stock_set             shopware-writes-need-approval  this would change live shop data
- 8  allow  shopware__stock_set             -                             default allow
- 9  allow  shopware__order_get             read-only-ok                  matched rule read-only-ok (shopware.*_search|shopware.*_get)
+ 3  deny   shell__exec                     no-destructive-shell          destructive shell command
+ 4  allow  fs__write_file                  -                             default allow
+ 5  deny   fs__write_file                  fs-stay-in-repo               writes are confined to the repository
+ 6  allow  fs__read_file                   -                             default allow
+ 7  allow  db__query                       -                             default allow
+ 8  deny   db__query                       no-sql-that-loses-data        queries that destroy data are not for agents
+ 9  deny   db__query                       no-sql-that-loses-data        queries that destroy data are not for agents
+10  allow  github__list_issues             -                             default allow
+11  ask    github__create_issue            github-writes-need-a-human    this changes something other people see
+12  deny   github__delete_repository       github-deletes-are-out        nothing on GitHub gets deleted by an agent
+13  ask    github__merge_pull_request      github-writes-need-a-human    this changes something other people see
+14  deny   shell__deploy                   no-deploys-on-friday-afternoon  no deploys on Friday afternoon, you know why
+15  allow  shell__deploy                   -                             default allow
+16  ask    fs__delete_tree                 destructive-per-the-server    the server itself marks this tool as destructive
+17  allow  fs__stat                        -                             default allow
+18  deny   shell__exec                     loop-guard                    loop guard: the identical call has been made 10 times in a row; change the arguments or stop
+19  deny   shell__exec                     budget                        budget: rate limit of 60 calls per minute reached, slow down
+20  deny   shell__exec                     frozen                        agentgate is frozen; run `agentgate unfreeze` to let calls through again

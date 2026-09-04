@@ -1,5 +1,5 @@
  0  allow  fs__write_file                  always-allow-writes           writes are explicitly allowed by this policy
  1  allow  fs__write_file                  always-allow-writes           writes are explicitly allowed by this policy
- 2  deny   fs__write_file                  -                             budget: limit of 2 calls for fs.write_file reached
+ 2  deny   fs__write_file                  budget                        budget: limit of 2 calls for fs.write_file reached
  3  allow  fs__read_file                   -                             default allow
- 4  deny   fs__read_file                   -                             budget: session limit of 3 calls reached
+ 4  deny   fs__read_file                   budget                        budget: session limit of 3 calls reached

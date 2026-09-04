@@ -1,0 +1,16 @@
+ 0  deny   t__anything                     frozen                        agentgate is frozen; run `agentgate unfreeze` to let calls through again
+ 1  allow  t__poll                         -                             default allow
+ 2  deny   t__poll                         loop-guard                    loop guard: the identical call has been made 2 times in a row; change the arguments or stop
+ 3  deny   t__poll                         loop-guard                    loop guard: the identical call has been made 7 times in a row; change the arguments or stop
+ 4  allow  t__fast                         -                             default allow
+ 5  deny   t__fast                         budget                        budget: rate limit of 3 calls per minute reached, slow down
+ 6  allow  t__chatty                       -                             default allow
+ 7  deny   t__chatty                       budget                        budget: session limit of roughly 1000 tokens through tools reached
+ 8  ask    t__wipe                         ask-before-destructive        the server marks this tool as destructive
+ 9  allow  t__list                         read-only-is-fine             matched rule read-only-is-fine (*)
+10  allow  t__unlabelled                   -                             default allow
+11  deny   t__deploy                       no-deploys-on-friday-afternoon  no deploys on Friday afternoon
+12  allow  t__deploy                       -                             default allow
+13  ask    t__deploy                       weekends-need-approval        matched rule weekends-need-approval (t.deploy)
+14  allow  t__deploy                       -                             default allow
+15  allow  t__deploy                       -                             default allow
