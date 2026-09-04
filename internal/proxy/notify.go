@@ -128,17 +128,17 @@ func (ev Event) render() string {
 	var b strings.Builder
 	switch ev.Event {
 	case config.EventHoneypot:
-		b.WriteString("🪤 honeypot tripped: ")
+		b.WriteString("honeypot tripped: ")
 	case config.EventFreeze:
-		b.WriteString("🧊 gateway frozen: ")
+		b.WriteString("gateway frozen: ")
 	case config.EventDeny:
-		b.WriteString("⛔ denied: ")
+		b.WriteString("denied: ")
 	case config.EventAsk:
-		b.WriteString("🙋 approval needed: ")
+		b.WriteString("approval needed: ")
 	case config.EventShadow:
-		b.WriteString("👻 shadow mode would have denied: ")
+		b.WriteString("shadow mode would have denied: ")
 	case config.EventError:
-		b.WriteString("💥 call failed: ")
+		b.WriteString("call failed: ")
 	default:
 		b.WriteString(ev.Event + ": ")
 	}
@@ -163,20 +163,9 @@ func (ev Event) render() string {
 	return b.String()
 }
 
-func ntfyTag(event string) string {
-	switch event {
-	case config.EventHoneypot:
-		return "rotating_light"
-	case config.EventFreeze:
-		return "ice_cube"
-	case config.EventAsk:
-		return "raising_hand"
-	case config.EventError:
-		return "boom"
-	default:
-		return "no_entry"
-	}
-}
+// ntfyTag labels the notification with the event name, which ntfy shows as a
+// plain tag.
+func ntfyTag(event string) string { return "agentgate," + event }
 
 func shortID(id string) string {
 	if len(id) <= 10 {

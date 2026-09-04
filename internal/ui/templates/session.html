@@ -32,7 +32,7 @@
 {{range .Calls}}
 <details class="call {{.Decision}}{{if .Shadow}} shadow{{end}}{{if isHoneypot .RuleID}} honeypot{{end}}">
   <summary>
-    {{if isHoneypot .RuleID}}<span class="badge honeypot">🪤 honeypot</span>{{else if .Shadow}}<span class="badge shadow">shadow · would {{.Decision}}</span>{{else}}<span class="badge {{.Decision}}">{{.Decision}}</span>{{end}}
+    {{if isHoneypot .RuleID}}<span class="badge honeypot">honeypot</span>{{else if .Shadow}}<span class="badge shadow">shadow · would {{.Decision}}</span>{{else}}<span class="badge {{.Decision}}">{{.Decision}}</span>{{end}}
     <code class="tool">{{.Tool}}</code>
     <small class="muted">{{ts .TS}} · {{.DurationMS}} ms · ~{{tokens .TokensEst}} tok</small>
     {{if .IsError}}<span class="badge error">error</span>{{end}}

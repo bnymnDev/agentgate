@@ -203,7 +203,7 @@ func (p *Proxy) Freeze(reason, by string) error {
 	p.notify.emit(Event{
 		Event:    config.EventFreeze,
 		Decision: policy.Decision{Action: policy.ActionDeny, Reason: st.Reason, RuleID: policy.RuleFrozen},
-		Message:  "🧊 gateway frozen by " + st.By + ": " + st.Reason,
+		Message:  "gateway frozen by " + st.By + ": " + st.Reason,
 	})
 	return nil
 }

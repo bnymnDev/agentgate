@@ -2,7 +2,7 @@
 <hgroup>
   <h1><code class="tool">{{.Call.Tool}}</code></h1>
   <p>
-    {{if isHoneypot .Call.RuleID}}<span class="badge honeypot">🪤 honeypot</span>{{else if .Call.Shadow}}<span class="badge shadow">shadow · would {{.Call.Decision}}</span>{{else}}<span class="badge {{.Call.Decision}}">{{.Call.Decision}}</span>{{end}}
+    {{if isHoneypot .Call.RuleID}}<span class="badge honeypot">honeypot</span>{{else if .Call.Shadow}}<span class="badge shadow">shadow · would {{.Call.Decision}}</span>{{else}}<span class="badge {{.Call.Decision}}">{{.Call.Decision}}</span>{{end}}
     {{ts .Call.TS}} · {{.Call.DurationMS}} ms · upstream <strong>{{.Call.Upstream}}</strong>
     {{if .Call.RuleID}}· rule <code>{{.Call.RuleID}}</code>{{end}}
   </p>

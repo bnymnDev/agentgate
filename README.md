@@ -14,7 +14,7 @@ Every tool call is checked against a policy, recorded, replayable — and stoppa
 │  agent     │◀──────────│ ├ allow  ├ sqlite│◀────────│ github       │
 └────────────┘           │ ├ deny   ├ replay│  http   │ shell, db, … │
                          │ ├ ask    └ tail  │────────▶└──────────────┘
-                         │ └ 🧊 freeze      │
+                         │ └ freeze         │
                          └──────────────────┘
 ```
 
@@ -26,13 +26,13 @@ No changes to the host. No changes to the servers. No cgo, no runtime, no cloud.
 
 | | |
 |---|---|
-| 🧊 **Kill switch** | `agentgate freeze` denies every tool call from every agent on the machine, instantly, without dropping a connection. `agentgate unfreeze` when you have looked. |
-| 🪤 **Honeypot tools** | Advertise a tool that does not exist — `db__drop_all_tables` — and find out the moment an agent tries to use it. That is a prompt injection, caught red-handed. Optionally freezes everything on the spot. |
-| 🔁 **Loop guard** | The same call with the same arguments ten times in a row is not diligence, it is a stuck agent burning money. agentgate stops it and tells the model why. |
-| 👻 **Shadow mode** | Run a strict policy without enforcing it. See what it *would* have blocked in the audit log, tune, then flip the switch. |
-| ⏪ **Time-travel policy testing** | `agentgate replay <session> --dry-run` re-runs yesterday's real session against today's policy and shows exactly which decisions change. |
-| 🕵️ **Secret redaction, both ways** | Secrets are scrubbed before they reach the audit log — and, if you say so, before they reach the model. Your agent reads `.env`, the model gets `[REDACTED]`. |
-| 📣 **Slack, Discord, ntfy, anything** | A denial, an approval request, a honeypot trip: get it on your phone. A webhook URL is all it takes. |
+| **Kill switch** | `agentgate freeze` denies every tool call from every agent on the machine, instantly, without dropping a connection. `agentgate unfreeze` when you have looked. |
+| **Honeypot tools** | Advertise a tool that does not exist — `db__drop_all_tables` — and find out the moment an agent tries to use it. That is a prompt injection, caught red-handed. Optionally freezes everything on the spot. |
+| **Loop guard** | The same call with the same arguments ten times in a row is not diligence, it is a stuck agent burning money. agentgate stops it and tells the model why. |
+| **Shadow mode** | Run a strict policy without enforcing it. See what it *would* have blocked in the audit log, tune, then flip the switch. |
+| **Time-travel policy testing** | `agentgate replay <session> --dry-run` re-runs yesterday's real session against today's policy and shows exactly which decisions change. |
+| **Secret redaction, both ways** | Secrets are scrubbed before they reach the audit log — and, if you say so, before they reach the model. Your agent reads `.env`, the model gets `[REDACTED]`. |
+| **Slack, Discord, ntfy, anything** | A denial, an approval request, a honeypot trip: get it on your phone. A webhook URL is all it takes. |
 
 Plus the boring parts done properly: a YAML policy language with globs, regexes and JSONPath-lite argument matching; budgets per session, per tool, per minute and per token; rules on what the *server itself* says about a tool (`annotations.destructive: true`); rules on the time of day (no deploys on Friday afternoon); approvals from the terminal or a web UI; a local SQLite audit log with replay, diff, stats and a live `tail`; and a `policy suggest` that writes a deny-by-default policy from what your agent actually did.
 
@@ -41,8 +41,18 @@ Plus the boring parts done properly: a YAML policy language with globs, regexes 
 ## 60 seconds
 
 ```sh
-go install github.com/bnymnDev/agentgate/cmd/agentgate@latest   # or: brew install bnymnDev/tap/agentgate
+go install github.com/bnymnDev/agentgate/cmd/agentgate@latest
 ```
+
+or with Homebrew, on macOS and Linux:
+
+```sh
+brew tap bnymnDev/agentgate https://github.com/bnymnDev/agentgate
+brew install bnymnDev/agentgate/agentgate
+```
+
+Prebuilt binaries for linux, macOS and Windows (amd64 and arm64) are on the
+[releases page](https://github.com/bnymnDev/agentgate/releases).
 
 **1.** Write `agentgate.yaml`:
 
@@ -90,8 +100,8 @@ agentgate tail
 14:02:11  allow   fs__read_file          3ms
 14:02:12  allow   fs__write_file         5ms
 14:02:14  DENY    fs__write_file         0ms  writes are confined to the repository
-14:02:19  🪤 TRAP fs__delete_everything  0ms  honeypot: fs__delete_everything does not exist. Calling it means…
-🧊 the gateway is now FROZEN
+14:02:19  TRAP    fs__delete_everything  0ms  honeypot: fs__delete_everything does not exist. Calling it means…
+the gateway is now FROZEN
 ```
 
 That last line is an agent that was told, somewhere in a file it read, to wipe the workspace. It did not get to.

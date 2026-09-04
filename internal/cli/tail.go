@@ -82,7 +82,7 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 
 			frozen := killswitch.Engaged(cfg.FreezeFile())
 			if frozen && !asJSON {
-				fmt.Fprintln(out, w.paint(colourRed, "🧊 the gateway is FROZEN"))
+				fmt.Fprintln(out, w.paint(colourRed, "the gateway is FROZEN"))
 			}
 			ticker := time.NewTicker(400 * time.Millisecond)
 			defer ticker.Stop()
@@ -103,9 +103,9 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 				if now := killswitch.Engaged(cfg.FreezeFile()); now != frozen && !asJSON {
 					frozen = now
 					if frozen {
-						fmt.Fprintln(out, w.paint(colourRed, "🧊 the gateway is now FROZEN"))
+						fmt.Fprintln(out, w.paint(colourRed, "the gateway is now FROZEN"))
 					} else {
-						fmt.Fprintln(out, w.paint(colourGreen, "🟢 the gateway is unfrozen"))
+						fmt.Fprintln(out, w.paint(colourGreen, "the gateway is unfrozen"))
 					}
 				}
 			}
@@ -153,7 +153,7 @@ func (w *lineWriter) write(c *audit.Call) {
 	var badge string
 	switch {
 	case c.RuleID == policy.RuleHoneypot:
-		badge = w.paint(colourRed, "🪤 TRAP ")
+		badge = w.paint(colourRed, "TRAP   ")
 	case c.Shadow:
 		badge = w.paint(colourPurple, "SHADOW ")
 	case c.Decision == policy.ActionDeny:

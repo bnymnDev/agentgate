@@ -73,7 +73,7 @@ prefix of a real upstream so it sits among that server's tools. A honeypot
 whose name collides with a real tool is skipped and logged; the real tool wins.
 
 `agentgate stats` counts honeypot trips separately, `agentgate tail` marks them
-with 🪤, and the web UI highlights them.
+as TRAP, and the web UI highlights them.
 
 ## Loop guard
 
