@@ -1,0 +1,25 @@
+$ agentgate check --tool shell.exec --args '{"command":"rm -rf /"}'
+tool      shell.exec
+decision  DENY
+reason    destructive shell command
+rule      no-destructive-shell
+#sleep 1500
+$ agentgate check --tool shell.deploy --at 'friday 17:00'
+tool      shell.deploy
+decision  DENY
+reason    no deploys on Friday afternoon, you know why
+rule      no-deploys-on-friday-afternoon
+at        Fri, 04 Sep 2026 17:00:00 UTC
+#sleep 1500
+$ agentgate check --tool github.merge_pull_request --args '{"number":42}'
+tool      github.merge_pull_request
+decision  ASK
+reason    this changes something other people see
+rule      github-writes-need-a-human
+#sleep 1500
+$ agentgate check --tool fs.write_file --args '{"path":"/home/me/repo/x"}' --calls-so-far 50
+tool      fs.write_file
+decision  DENY
+reason    budget: limit of 50 calls for fs.write_file reached
+rule      budget
+#sleep 4000

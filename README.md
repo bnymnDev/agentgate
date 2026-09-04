@@ -1,44 +1,50 @@
-<h1 align="center">agentgate</h1>
-
-<p align="center"><strong>Firewall, kill switch and flight recorder for your AI agent's tools.</strong></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/brand/banner-dark.svg">
+    <img src="docs/brand/banner-light.svg" alt="agentgate — firewall, kill switch and flight recorder for your AI agent's tools" width="100%">
+  </picture>
+</p>
 
 <p align="center">
-One binary between your AI agent and the tools it uses.<br>
-Every tool call is checked, recorded and replayable. Any of them can be stopped. All of them, with one command.
+  <a href="https://github.com/bnymnDev/agentgate/actions/workflows/ci.yaml"><img src="https://github.com/bnymnDev/agentgate/actions/workflows/ci.yaml/badge.svg" alt="ci"></a>
+  <a href="https://github.com/bnymnDev/agentgate/releases/latest"><img src="https://img.shields.io/github/v/release/bnymnDev/agentgate?display_name=tag&color=0b7bd6" alt="release"></a>
+  <img src="https://img.shields.io/github/go-mod/go-version/bnymnDev/agentgate?color=00add8" alt="go version">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="license"></a>
+</p>
+
+<p align="center">
+  <a href="#introducing-agentgate">Why</a> ·
+  <a href="#see-it-work">Demo</a> ·
+  <a href="#60-seconds">Install</a> ·
+  <a href="#the-policy-language-in-one-screen">Policies</a> ·
+  <a href="docs/guardrails.md">Guardrails</a> ·
+  <a href="#documentation">Docs</a>
 </p>
 
 ---
 
 ## Introducing agentgate
 
-I gave a coding agent access to my shell, my filesystem, my GitHub account and
-a database, and then I watched it work. Most of what it did was fine. Some of
-it was brilliant. And a few times it did something that made me reach for the
-power button: a `git push --force` it had not been asked for, a `rm -rf` on a
-path it had misread, a `DELETE FROM` with a `WHERE` clause it had guessed. It
-had every permission I had, and no idea which of them were dangerous.
+Give an AI agent a shell, a filesystem and a database, and it has every
+permission you have — and no idea which of them are dangerous. It will
+`git push --force` because a plan said so. It will `rm -rf` a path it
+misread. It will run a `DELETE` whose `WHERE` clause it guessed. Not out of
+malice. Because nothing told it not to, and nothing was watching.
 
-That is the state of AI agents today. The Model Context Protocol made it
-trivial to hand a model real tools. Nothing in it says what the model is
-allowed to do with them, nothing records what it did, and nothing stops it
-when it goes wrong. You trust the model, or you do not install the server.
+The Model Context Protocol turned "give the model real tools" into a one-line
+config change. It says nothing about what the model may *do* with those tools,
+keeps no record of what it did, and has no way to stop it mid-flight. So far
+the choice has been binary: trust the model, or do not install the server.
 
-**agentgate is the third option.** It is a small proxy that sits between the
-agent and its tools, speaks MCP on both sides, and gives you what every other
-kind of software with real permissions has had for decades: a policy, an audit
-log, and an off switch.
+**agentgate is the third option.** A small proxy that sits between the agent
+and its tools, speaks MCP on both sides, and gives agents what every other
+kind of software with real permissions has had for decades:
 
-- **A policy** decides what gets through. Deny `rm -rf`. Ask before anything
-  the server calls destructive. Nothing on GitHub gets deleted. No deploys on
-  Friday afternoon. Rules are plain YAML, and a denied call comes back to the
-  agent as a readable reason, so it adapts instead of retrying.
-- **An audit log** records every call: the arguments, the result, the
-  decision, how long it took. Secrets are scrubbed before they are written.
-  You can replay yesterday's session against a new policy and see what would
-  have changed before you trust it.
-- **An off switch** stops every agent on the machine with one command, without
-  dropping a connection. And a decoy tool — a honeypot — tells you the moment
-  an agent is following instructions you never gave it.
+| | |
+|---|---|
+| **A policy** | Plain YAML that decides what gets through. Deny `rm -rf`. Ask before anything the server itself calls destructive. Nothing on GitHub gets deleted. No deploys on Friday afternoon. A denied call comes back to the agent as a readable reason, so it adapts instead of retrying. |
+| **An audit log** | Every call, with its arguments, result, decision and duration, in a local SQLite file. Secrets are scrubbed before they are written. Replay yesterday's session against tomorrow's policy and see what would change — before you trust it. |
+| **An off switch** | One command freezes every agent on the machine without dropping a connection. And a decoy tool — a honeypot — tells you the moment an agent is following instructions you never gave it. |
 
 No changes to the agent. No changes to the tools. No cgo, no runtime, no
 cloud. One binary, one YAML file, one line changed in the host config.
@@ -54,13 +60,56 @@ cloud. One binary, one YAML file, one line changed in the host config.
                          └──────────────────┘
 ```
 
-This is what it looks like when it earns its keep:
+---
 
-![agentgate tail: an agent reads a file, runs the tests, gets denied on rm -rf, trips a honeypot and freezes the gateway; then agentgate status and agentgate unfreeze](docs/demo.gif)
+## See it work
 
-*Real output. The agent read a file, ran the tests, was denied `rm -rf`, then
-called a tool that does not exist — a honeypot — and every agent on the
-machine was frozen until a human looked.*
+Every recording on this page is real output from the binary, replayed from a
+transcript in [`docs/demo/`](docs/demo). Nothing is mocked.
+
+**An agent gets to work. Then it gets ideas.** It reads a file, runs the tests,
+is denied on `rm -rf`, and then calls a tool that does not exist — a honeypot.
+Every agent on the machine is frozen until a human looks.
+
+![agentgate tail: read_file allowed, exec allowed, rm -rf denied, honeypot tripped, gateway frozen; then status and unfreeze](docs/demo/story.gif)
+
+**Test tomorrow's policy on yesterday's session.** Three new rules, one
+command, and you know exactly which of the seven calls would now be stopped —
+without sending anything anywhere.
+
+![agentgate replay --dry-run: seven recorded calls re-evaluated, three decisions flip from allow to deny](docs/demo/replay.gif)
+
+**Let the log write the policy.** Run a strict policy in shadow mode — it
+records what it *would* have done and blocks nothing — look at the numbers,
+then let `policy suggest` turn what the agent actually did into a
+deny-by-default allow-list.
+
+![agentgate in shadow mode, then stats, then policy suggest writing an allow-list](docs/demo/onboard.gif)
+
+**Ask before you ship a rule.** `check` evaluates a single call against the
+policy — at any time of day you like, with any budget already spent — and
+exits non-zero on a deny, so it works as a test in CI.
+
+![agentgate check: rm -rf denied, a Friday-afternoon deploy denied, a merge asks for a human, a budget runs out](docs/demo/check.gif)
+
+---
+
+## What's in the box
+
+| | |
+|---|---|
+| **Kill switch** | `agentgate freeze` denies every tool call from every agent on the machine, instantly, without dropping a connection. `agentgate unfreeze` when you have looked. |
+| **Honeypot tools** | Advertise a tool that does not exist — `db__drop_all_tables` — and find out the moment an agent tries to use it. That is a prompt injection, caught red-handed. Optionally freezes everything on the spot. |
+| **Loop guard** | The same call with the same arguments ten times in a row is not diligence, it is a stuck agent burning money. agentgate stops it and tells the model why. |
+| **Shadow mode** | Run a strict policy without enforcing it. See what it *would* have blocked in the audit log, tune, then flip the switch. |
+| **Time-travel policy testing** | `agentgate replay <session> --dry-run` re-runs a real session against the current policy and shows exactly which decisions change. |
+| **Secret redaction, both ways** | Secrets are scrubbed before they reach the audit log — and, if you say so, before they reach the model. The agent reads `.env`, the model gets `[REDACTED]`. |
+| **Slack, Discord, ntfy, anything** | A denial, an approval request, a honeypot trip: get it on your phone. A webhook URL is all it takes. |
+| **Approvals that remember** | An `ask` rule parks the call until a human answers — in the terminal or the web UI — and "allow for this session" means the same question is not asked again a minute later. |
+| **Budgets** | Per session, per tool, per minute, per token. Hard caps that no rule can lift. |
+| **Rules on what the server says** | `annotations.destructive: true` — ask before anything the server itself marks destructive. |
+| **Rules on the clock** | `time.weekday`, `time.hour` — no deploys on Friday afternoon, approvals on weekends. |
+| **A web UI** | Sessions, calls, the policy, the approvals inbox, the freeze button. Server-rendered, embedded, no CDN. |
 
 ---
 
@@ -70,25 +119,8 @@ machine was frozen until a human looked.*
   while you sleep, without waking up to a rewritten git history.
 - **You ship agents to other people** and need to say, truthfully, what they
   can and cannot do — and prove it afterwards.
-- **You build MCP servers** and want a way to test what an agent does with them
-  before a customer finds out.
-
----
-
-## Seven things it does that nothing else does
-
-| | |
-|---|---|
-| **Kill switch** | `agentgate freeze` denies every tool call from every agent on the machine, instantly, without dropping a connection. `agentgate unfreeze` when you have looked. |
-| **Honeypot tools** | Advertise a tool that does not exist — `db__drop_all_tables` — and find out the moment an agent tries to use it. That is a prompt injection, caught red-handed. Optionally freezes everything on the spot. |
-| **Loop guard** | The same call with the same arguments ten times in a row is not diligence, it is a stuck agent burning money. agentgate stops it and tells the model why. |
-| **Shadow mode** | Run a strict policy without enforcing it. See what it *would* have blocked in the audit log, tune, then flip the switch. |
-| **Time-travel policy testing** | `agentgate replay <session> --dry-run` re-runs yesterday's real session against today's policy and shows exactly which decisions change. |
-| **Secret redaction, both ways** | Secrets are scrubbed before they reach the audit log — and, if you say so, before they reach the model. Your agent reads `.env`, the model gets `[REDACTED]`. |
-| **Slack, Discord, ntfy, anything** | A denial, an approval request, a honeypot trip: get it on your phone. A webhook URL is all it takes. |
-| **Approvals that remember** | An `ask` rule parks the call until a human answers — in the terminal or the web UI — and "allow for this session" means the same question is not asked again a minute later. |
-
-Plus the boring parts done properly: a YAML policy language with globs, regexes and JSONPath-lite argument matching; budgets per session, per tool, per minute and per token; rules on what the *server itself* says about a tool (`annotations.destructive: true`); rules on the time of day (no deploys on Friday afternoon); approvals from the terminal or a web UI; a local SQLite audit log with replay, diff, stats and a live `tail`; and a `policy suggest` that writes a deny-by-default policy from what your agent actually did.
+- **You build MCP servers** and want to see what an agent does with them before
+  a customer does.
 
 ---
 
@@ -297,6 +329,22 @@ A honeypot trip arrives as an urgent notification with the arguments the agent u
 
 ---
 
+## Design principles
+
+1. **Transparent by default.** With one upstream and no matching rule, bytes
+   in equal bytes out. Tool schemas and results are never rewritten, with one
+   documented exception you have to turn on.
+2. **Every decision has a reason.** Allow, deny and ask are typed values with
+   a human-readable reason and the id of the rule that decided. No booleans.
+3. **Evaluation is pure.** Same policy, same call, same decision — no clock,
+   no filesystem, no network inside the evaluator. That is what makes replay
+   trustworthy.
+4. **Fail closed, audit best-effort.** A frozen gateway denies; a broken audit
+   store never blocks a call. The two are not symmetric on purpose.
+5. **One binary.** No cgo, no daemon, no Node, no cloud, no account.
+
+---
+
 ## Documentation
 
 | Document | What is in it |
@@ -332,3 +380,5 @@ Roadmap: OpenTelemetry export of the audit log, a `policy lint` that flags rules
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
+
+<p align="center"><sub>If agentgate saved you from an <code>rm -rf</code>, a star helps the next person find it.</sub></p>

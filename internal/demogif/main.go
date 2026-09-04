@@ -9,6 +9,7 @@
 //	$ command          typed character by character, then executed
 //	^C                 shown as an interrupt
 //	#sleep 800         pause, in milliseconds
+//	#clear             clear the screen, as `clear` would
 //	anything else      a line of output, ANSI SGR colours honoured
 package main
 
@@ -75,8 +76,8 @@ type entry struct {
 }
 
 func main() {
-	in := flag.String("in", "docs/demo/transcript.txt", "transcript to render")
-	out := flag.String("out", "docs/demo.gif", "where to write the GIF")
+	in := flag.String("in", "docs/demo/story.txt", "transcript to render")
+	out := flag.String("out", "docs/demo/story.gif", "where to write the GIF")
 	flag.Parse()
 
 	entries, err := parse(*in)
@@ -127,6 +128,8 @@ func parse(path string) ([]entry, error) {
 			out = append(out, entry{kind: "cmd", text: strings.TrimPrefix(line, "$ ")})
 		case line == "^C":
 			out = append(out, entry{kind: "interrupt"})
+		case line == "#clear":
+			out = append(out, entry{kind: "clear"})
 		case strings.HasPrefix(line, "#sleep "):
 			ms, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(line, "#sleep ")))
 			if err != nil {
@@ -365,6 +368,9 @@ func (r *renderer) animate(entries []entry) *gif.GIF {
 			add(r.frame("", false), 400)
 		case "sleep":
 			add(r.frame("", false), e.ms)
+		case "clear":
+			r.lines = nil
+			add(r.frame("", true), 500)
 		}
 	}
 	add(r.frame("", true), 2500)

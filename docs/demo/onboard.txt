@@ -1,0 +1,51 @@
+$ agentgate tail
+[2m── following ./audit.db (ctrl-c to stop) ──[0m
+[2m20:12:31[0m  [32mallow  [0m [36mfs__read_file[0m                1ms  [2mmatched rule reads (fs.read_file)[0m
+[2m20:12:32[0m  [32mallow  [0m [36mshell__exec[0m                  0ms  [2mmatched rule tests (shell.exec)[0m
+[2m20:12:32[0m  [35mSHADOW [0m [36mfs__write_file[0m               0ms  [2mwould have denied: default deny[0m
+[2m20:12:33[0m  [35mSHADOW [0m [36mshell__exec[0m                  0ms  [2mwould have denied: default deny[0m
+[2m20:12:34[0m  [32mallow  [0m [36mfs__read_file[0m                1ms  [2mmatched rule reads (fs.read_file)[0m
+#sleep 1800
+^C
+#clear
+$ agentgate stats --since 1h
+agentgate stats — last 1h
+
+  sessions 1      calls 5      denied 0      shadowed 2      honeypot trips 0    errors 0    tokens ~124
+
+TOOL            CALLS  ALLOWED  DENIED  ERRORS  AVG MS  TOKENS  LAST SEEN
+────            ─────  ───────  ──────  ──────  ──────  ──────  ─────────
+fs__read_file   2      2        0       0       1       44      09-04 20:12
+shell__exec     2      2        0       0       0       45      09-04 20:12
+fs__write_file  1      1        0       0       0       35      09-04 20:12
+
+RULE   DECISION  TIMES
+────   ────────  ─────
+reads  allow     2
+tests  allow     1
+#sleep 2500
+#clear
+$ agentgate policy suggest --since 1h
+# Suggested by `agentgate policy suggest` on 2026-09-04
+# Learned from 5 calls in 1 sessions (the last 1h).
+# This allows exactly what the agent did and nothing else. Read it before you trust it.
+policy:
+  default: deny
+  budget:
+    calls_per_session: 10   # busiest session had 5
+  loop_guard:
+    repeats: 10
+  rules:
+    - id: allow-fs-read-file
+      tool: "fs__read_file"
+      action: allow
+      reason: "observed: 2 calls"
+    - id: allow-fs-write-file
+      tool: "fs__write_file"
+      action: allow
+      reason: "observed: 1 calls"
+    - id: allow-shell-exec
+      tool: "shell__exec"
+      action: allow
+      reason: "observed: 2 calls"
+#sleep 4500
