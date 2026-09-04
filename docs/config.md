@@ -120,6 +120,18 @@ is none — which is the normal case when a host launches agentgate as a
 subprocess — `ask` denies with `approval required, no TTY`. To actually approve
 things, run with `--ui` and use the approvals inbox, or run in `--http` mode.
 
+Both channels offer three answers:
+
+| Terminal | Web UI | Effect |
+|---|---|---|
+| `y` | Allow once | this call goes through; the next one asks again |
+| `a` | Allow for this session | this call and every later call of the **same tool** in the **same session** go through without asking |
+| `n` (or nothing) | Deny | the call is denied with a reason that says who rejected it |
+
+A session-wide approval is keyed by tool name, not by arguments, and dies
+with the session. The audit log records the rule that asked on every call it
+covered, with the reason `approved earlier for the rest of this session`.
+
 ## `audit`
 
 | Field | Default | What it does |
@@ -295,6 +307,7 @@ config checks for it on every call. `agentgate status` prints the path.
 | Flag | What it does | Default |
 |---|---|---|
 | `--args` | show the arguments on every line |  |
+| `--color` | colour the output: auto, always or never | `auto` |
 | `--json` | one JSON object per line |  |
 | `--last` | how many recent calls to show before following | `20` |
 | `--no-follow` | print the recent calls and exit |  |

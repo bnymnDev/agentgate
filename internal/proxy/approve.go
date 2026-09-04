@@ -27,10 +27,18 @@ type ApprovalRequest struct {
 	Timeout   time.Duration   `json:"-"`
 }
 
+// Verdict is an approver's answer. Session is set when the human chose to
+// allow the tool for the rest of the session, so that the same question is not
+// asked again a minute later.
+type Verdict struct {
+	policy.Decision
+	Session bool
+}
+
 // Approver turns an "ask" into an allow or a deny. An error means the question
 // could not be put to anyone, and the call is denied with that reason.
 type Approver interface {
-	Approve(ctx context.Context, req ApprovalRequest) (policy.Decision, error)
+	Approve(ctx context.Context, req ApprovalRequest) (Verdict, error)
 }
 
 // DenyApprover is the fallback when no one can be asked.
@@ -40,12 +48,12 @@ type DenyApprover struct {
 }
 
 // Approve always denies.
-func (d DenyApprover) Approve(context.Context, ApprovalRequest) (policy.Decision, error) {
+func (d DenyApprover) Approve(context.Context, ApprovalRequest) (Verdict, error) {
 	reason := d.Reason
 	if reason == "" {
 		reason = "approval required, no TTY"
 	}
-	return policy.Decision{Action: policy.ActionDeny, Reason: reason}, nil
+	return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: reason}}, nil
 }
 
 // TTYApprover asks on agentgate's own terminal. In stdio mode stdin and stdout
@@ -81,8 +89,8 @@ func (t *TTYApprover) reader() <-chan string {
 	return t.lines
 }
 
-// Approve prints the call and waits for y or n.
-func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (policy.Decision, error) {
+// Approve prints the call and waits for y, n, or a (allow for the session).
+func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
 	// One question at a time: two agents asking at once on one terminal would
 	// be unanswerable.
 	t.mu.Lock()
@@ -94,9 +102,9 @@ func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (policy.
 	fmt.Fprintf(t.Out, "  rule     %s — %s\n", req.Decision.RuleID, req.Decision.Reason)
 	fmt.Fprintf(t.Out, "  args     %s\n", indentArgs(req.Args))
 	if req.Timeout > 0 {
-		fmt.Fprintf(t.Out, "  allow this call? [y/N] (denied after %s) ", req.Timeout)
+		fmt.Fprintf(t.Out, "  allow this call? [y]es / [N]o / [a]lways for this session (denied after %s) ", req.Timeout)
 	} else {
-		fmt.Fprintf(t.Out, "  allow this call? [y/N] ")
+		fmt.Fprintf(t.Out, "  allow this call? [y]es / [N]o / [a]lways for this session ")
 	}
 
 	lines := t.reader()
@@ -115,17 +123,21 @@ func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (policy.
 	select {
 	case <-ctx.Done():
 		fmt.Fprintf(t.Out, "\n  no answer, denied\n")
-		return policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}, nil
+		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
 	case answer, ok := <-lines:
 		if !ok {
-			return policy.Decision{Action: policy.ActionDeny, Reason: "approval required, the terminal was closed"}, nil
+			return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval required, the terminal was closed"}}, nil
 		}
-		if answer == "y" || answer == "yes" {
+		switch answer {
+		case "y", "yes":
 			fmt.Fprintf(t.Out, "  allowed\n")
-			return policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal"}, nil
+			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal"}}, nil
+		case "a", "always":
+			fmt.Fprintf(t.Out, "  allowed for the rest of this session\n")
+			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal for the rest of the session"}, Session: true}, nil
 		}
 		fmt.Fprintf(t.Out, "  denied\n")
-		return policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the agentgate terminal"}, nil
+		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the agentgate terminal"}}, nil
 	}
 }
 
@@ -156,7 +168,7 @@ type pendingApproval struct {
 	CreatedAt time.Time       `json:"created_at"`
 	Expires   time.Time       `json:"expires"`
 
-	answer chan policy.Decision
+	answer chan Verdict
 }
 
 // PendingApproval is the read-only view the UI renders.
@@ -173,12 +185,12 @@ func NewInbox() *Inbox {
 }
 
 // Approve parks the call until someone answers in the UI or ctx expires.
-func (i *Inbox) Approve(ctx context.Context, req ApprovalRequest) (policy.Decision, error) {
+func (i *Inbox) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
 	entry := &pendingApproval{
 		ID:        newApprovalID(),
 		Request:   req,
 		CreatedAt: time.Now(),
-		answer:    make(chan policy.Decision, 1),
+		answer:    make(chan Verdict, 1),
 	}
 	if req.Timeout > 0 {
 		entry.Expires = entry.CreatedAt.Add(req.Timeout)
@@ -194,10 +206,10 @@ func (i *Inbox) Approve(ctx context.Context, req ApprovalRequest) (policy.Decisi
 	}()
 
 	select {
-	case d := <-entry.answer:
-		return d, nil
+	case v := <-entry.answer:
+		return v, nil
 	case <-ctx.Done():
-		return policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}, nil
+		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
 	}
 }
 
@@ -219,24 +231,40 @@ func (i *Inbox) Pending() []PendingApproval {
 	return out
 }
 
+// Choice is what a person clicked.
+type Choice string
+
+const (
+	// ChoiceAllow lets this one call through.
+	ChoiceAllow Choice = "allow"
+	// ChoiceAllowSession lets this call and every later call of the same tool
+	// in the same session through.
+	ChoiceAllowSession Choice = "allow-session"
+	// ChoiceDeny rejects the call.
+	ChoiceDeny Choice = "deny"
+)
+
 // Resolve answers a pending approval. It reports false when the id is unknown,
 // which happens when the call already timed out.
-func (i *Inbox) Resolve(id string, allow bool, who string) bool {
+func (i *Inbox) Resolve(id string, choice Choice, who string) bool {
 	i.mu.Lock()
 	entry, ok := i.pending[id]
 	i.mu.Unlock()
 	if !ok {
 		return false
 	}
-	d := policy.Decision{Action: policy.ActionDeny, Reason: "rejected in the agentgate web UI"}
-	if allow {
-		d = policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI"}
+	v := Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected in the agentgate web UI"}}
+	switch choice {
+	case ChoiceAllow:
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI"}}
+	case ChoiceAllowSession:
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI for the rest of the session"}, Session: true}
 	}
 	if who != "" {
-		d.Reason += " by " + who
+		v.Reason += " by " + who
 	}
 	select {
-	case entry.answer <- d:
+	case entry.answer <- v:
 		return true
 	default:
 		return false
@@ -247,22 +275,22 @@ func (i *Inbox) Resolve(id string, allow bool, who string) bool {
 type ChainApprover []Approver
 
 // Approve asks each approver in order.
-func (c ChainApprover) Approve(ctx context.Context, req ApprovalRequest) (policy.Decision, error) {
+func (c ChainApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
 	var last error
 	for _, a := range c {
 		if a == nil {
 			continue
 		}
-		d, err := a.Approve(ctx, req)
+		v, err := a.Approve(ctx, req)
 		if err == nil {
-			return d, nil
+			return v, nil
 		}
 		last = err
 	}
 	if last == nil {
 		last = errors.New("no approver available")
 	}
-	return policy.Decision{}, last
+	return Verdict{}, last
 }
 
 func indentArgs(raw json.RawMessage) string {

@@ -359,3 +359,25 @@ func waitForCalls(t *testing.T, store *audit.Store, n int) []*audit.Call {
 	}, 5*time.Second, 20*time.Millisecond, "audit records did not arrive")
 	return calls
 }
+
+// connectSecondClient opens another host connection to the same proxy.
+func connectSecondClient(t *testing.T, h *harness) *mcp.ClientSession {
+	t.Helper()
+	ctx := context.Background()
+	serverSide, clientSide := mcp.NewInMemoryTransports()
+	_, err := h.proxy.server.Connect(ctx, serverSide, nil)
+	require.NoError(t, err)
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "second-host", Version: "1"}, nil).Connect(ctx, clientSide, nil)
+	require.NoError(t, err)
+	t.Cleanup(func() { client.Close() })
+	return client
+}
+
+func mcpCallParams(tool string, args map[string]any) mcp.CallToolParams {
+	return mcp.CallToolParams{Name: tool, Arguments: args}
+}
+
+const (
+	timeoutShort = 3 * time.Second
+	pollShort    = 10 * time.Millisecond
+)

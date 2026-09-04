@@ -89,6 +89,25 @@ type sessionState struct {
 	streak  int
 	// tokens is the estimated token volume pushed through tools so far.
 	tokens int
+	// approved holds the tools a human allowed for the rest of the session.
+	approved map[string]bool
+}
+
+// approvedForSession reports whether a human already waved this tool through
+// for the whole session.
+func (st *sessionState) approvedForSession(tool string) bool {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.approved[tool]
+}
+
+func (st *sessionState) rememberApproval(tool string) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	if st.approved == nil {
+		st.approved = map[string]bool{}
+	}
+	st.approved[tool] = true
 }
 
 // observe notes that a call is being evaluated and returns the counters the

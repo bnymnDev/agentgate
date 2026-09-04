@@ -261,7 +261,9 @@ a result, and it is off by default. See
 `action: ask` parks the call until a human decides. What that means in practice
 depends on `approval.mode` and on whether the web UI is running — see
 [config.md](config.md#approval). If nobody can be asked, the call is denied with
-a reason that says exactly that, never silently allowed.
+a reason that says exactly that, never silently allowed. A human can allow one
+call or the tool for the rest of the session; either way the rule that asked is
+what the audit log records.
 
 `default: ask` is rejected: a default has to be a decision.
 
