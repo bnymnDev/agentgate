@@ -58,17 +58,24 @@ changelog:
       - '^chore:'
 
 brews:
+  # The formula is committed into this repository, under Formula/, by the
+  # release job's own token. No second repository, no extra secret. Users run
+  #   brew tap bnymnDev/agentgate https://github.com/bnymnDev/agentgate
+  #   brew install bnymnDev/agentgate/agentgate
   - name: agentgate
     repository:
       owner: bnymnDev
-      name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+      name: agentgate
+      branch: main
+    directory: Formula
+    commit_author:
+      name: Bünyamin Ulupinar
+      email: 88560587+bnymnDev@users.noreply.github.com
+    commit_msg_template: "chore(brew): formula for {{ .ProjectName }} {{ .Tag }}"
     homepage: https://github.com/bnymnDev/agentgate
     description: Firewall, kill switch and flight recorder for your AI agent's tools
     license: GPL-3.0-or-later
-    # Without a tap token the formula is only written to dist/, so a release
-    # never fails on the Homebrew step; add the secret to publish it.
-    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_TOKEN" "" }}auto{{ else }}true{{ end }}'
+    skip_upload: auto
     test: |
       system "#{bin}/agentgate", "--version"
 
@@ -77,6 +84,7 @@ release:
     ## Install
 
     ```
-    brew install bnymnDev/tap/agentgate
+    brew tap bnymnDev/agentgate https://github.com/bnymnDev/agentgate
+    brew install bnymnDev/agentgate/agentgate
     go install github.com/bnymnDev/agentgate/cmd/agentgate@{{ .Tag }}
     ```
