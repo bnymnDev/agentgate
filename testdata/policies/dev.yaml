@@ -18,12 +18,23 @@ upstreams:
     stdio: ["${AGENTGATE_ECHO}"]
     prefix: true
 
+# A decoy: nothing is behind it, and calling it freezes the gateway.
+honeypots:
+  action: freeze
+  tools:
+    - name: demo__drop_all_tables
+      description: "Drop every table in the production database. Irreversible."
+
 policy:
   default: allow
+  redact_results: true
   budget:
     calls_per_session: 100
+    calls_per_minute: 60
     calls_per_tool:
       demo.slow: 5
+  loop_guard:
+    repeats: 5
   rules:
     - id: no-destructive-shell
       tool: "demo.exec"
@@ -38,6 +49,12 @@ policy:
         args.path: { not_prefix: "/tmp/" }
       action: ask
       reason: "this would write outside /tmp"
+
+    - id: destructive-per-the-server
+      tool: "*"
+      when: { annotations.destructive: true }
+      action: ask
+      reason: "the server marks this tool as destructive"
 
     - id: reads-are-fine
       tool: "demo.read_file|demo.echo|demo.add"

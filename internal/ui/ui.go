@@ -18,6 +18,7 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
 	"github.com/bnymnDev/agentgate/internal/proxy"
 )
@@ -45,9 +46,13 @@ type Options struct {
 	Approvals Approvals
 	// Reload re-reads the config file and swaps the policy into the running
 	// proxy. Nil disables the reload button.
-	Reload  func() (*config.Config, error)
-	Logger  *slog.Logger
-	Version string
+	Reload func() (*config.Config, error)
+	// Freeze and Unfreeze throw and lift the kill switch. Nil hides the
+	// buttons.
+	Freeze   func(reason, by string) error
+	Unfreeze func() error
+	Logger   *slog.Logger
+	Version  string
 }
 
 // Server renders the UI.
@@ -95,6 +100,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /approvals", s.handleApprovals)
 	mux.HandleFunc("GET /partials/approvals", s.handleApprovalsPartial)
 	mux.HandleFunc("POST /approvals/{id}/{verb}", s.handleApprovalDecide)
+	mux.HandleFunc("POST /freeze", s.handleFreeze)
+	mux.HandleFunc("POST /unfreeze", s.handleUnfreeze)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"status":"ok"}`)
@@ -109,13 +116,25 @@ type page struct {
 	Version      string
 	AuditPath    string
 	PendingCount int
+	// Frozen and FreezeReason describe the kill switch; CanFreeze says whether
+	// this instance can toggle it.
+	Frozen       bool
+	FreezeReason string
+	FrozenBy     string
+	FrozenAt     time.Time
+	CanFreeze    bool
+	Shadow       bool
 }
 
 func (s *Server) page(title, nav string) page {
 	cfg := s.opts.Config()
-	p := page{Title: title, Nav: nav, Version: s.opts.Version}
+	p := page{Title: title, Nav: nav, Version: s.opts.Version, CanFreeze: s.opts.Freeze != nil && s.opts.Unfreeze != nil}
 	if cfg != nil {
 		p.AuditPath = cfg.Audit.Path
+		p.Shadow = cfg.Policy.IsShadow()
+		if st, frozen := killswitch.Status(cfg.FreezeFile()); frozen {
+			p.Frozen, p.FreezeReason, p.FrozenBy, p.FrozenAt = true, st.Reason, st.By, st.At
+		}
 	}
 	if s.opts.Approvals != nil {
 		p.PendingCount = len(s.opts.Approvals.Pending())
@@ -183,7 +202,8 @@ func funcs() template.FuncMap {
 				return fmt.Sprint(n)
 			}
 		},
-		"pretty": pretty,
+		"pretty":     pretty,
+		"isHoneypot": func(ruleID string) bool { return ruleID == policy.RuleHoneypot },
 	}
 }
 

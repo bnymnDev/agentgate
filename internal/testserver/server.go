@@ -65,12 +65,20 @@ func New() *mcp.Server {
 			return nil, addResult{Sum: in.A + in.B}, nil
 		})
 
-	mcp.AddTool(s, &mcp.Tool{Name: "write_file", Description: "Pretend to write a file"},
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "write_file",
+		Description: "Pretend to write a file",
+		Annotations: &mcp.ToolAnnotations{DestructiveHint: boolPtr(true), IdempotentHint: true},
+	},
 		func(_ context.Context, _ *mcp.CallToolRequest, in writeArgs) (*mcp.CallToolResult, any, error) {
 			return text(fmt.Sprintf("would write %d bytes to %s", len(in.Contents), in.Path)), nil, nil
 		})
 
-	mcp.AddTool(s, &mcp.Tool{Name: "read_file", Description: "Pretend to read a file"},
+	mcp.AddTool(s, &mcp.Tool{
+		Name:        "read_file",
+		Description: "Pretend to read a file",
+		Annotations: &mcp.ToolAnnotations{ReadOnlyHint: true, DestructiveHint: boolPtr(false)},
+	},
 		func(_ context.Context, _ *mcp.CallToolRequest, in writeArgs) (*mcp.CallToolResult, any, error) {
 			return text("contents of " + in.Path), nil, nil
 		})
@@ -129,6 +137,8 @@ func New() *mcp.Server {
 
 	return s
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: s}}}

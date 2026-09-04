@@ -38,21 +38,42 @@ upstreams:
     prefix: true
     timeout: 30s
 
-  - name: shopware
-    stdio: ["npx", "shopware-mcp"]
-    env: { SHOPWARE_URL: "${SHOPWARE_URL}" }
+  - name: github
+    stdio: ["npx", "-y", "@modelcontextprotocol/server-github"]
+    env: { GITHUB_PERSONAL_ACCESS_TOKEN: "${GITHUB_TOKEN}" }
 
   - name: remote
     http: https://mcp.example.com/mcp
     headers: { Authorization: "Bearer ${REMOTE_TOKEN}" }
     prefix: false
 
+honeypots:
+  action: freeze                 # deny | freeze — what tripping one does
+  tools:
+    - name: db__drop_all_tables
+      description: "Drop every table in the production database. Irreversible."
+
+notify:
+  webhooks:
+    - url: https://ntfy.sh/my-agent
+      format: ntfy               # json | slack | discord | ntfy
+      events: [deny, ask, honeypot, freeze]
+    - url: https://hooks.slack.com/services/T000/B000/XXXX
+      format: slack
+      headers: {}
+
 policy:
   default: allow
+  mode: enforce                  # enforce | shadow
+  redact_results: false
   budget:
     calls_per_session: 500
+    calls_per_minute: 60
+    tokens_per_session: 200000
     calls_per_tool:
       fs.write_file: 50
+  loop_guard:
+    repeats: 10
   rules: []                      # see docs/policies.md
 ```
 
@@ -155,9 +176,38 @@ else, so a `$` in a policy regex means what it says.
 An upstream that fails to connect is logged and skipped; the rest still come up.
 agentgate only refuses to start when *no* upstream can be reached.
 
+## `honeypots`
+
+Decoy tools that exist only to be called by an agent that should not be
+calling anything you did not ask for. See
+[guardrails.md](guardrails.md#honeypot-tools).
+
+| Field | Default | What it does |
+|---|---|---|
+| `action` | `deny` | `deny` records and denies; `freeze` also throws the kill switch. |
+| `tools[].name` | required | The exact name the host sees. Use a real upstream's prefix to blend in. |
+| `tools[].description` | a generic one | What the host shows the model. Make it convincing. |
+
+## `notify`
+
+Webhooks that hear about events. See [guardrails.md](guardrails.md#notifications).
+
+| Field | Default | What it does |
+|---|---|---|
+| `webhooks[].url` | required | An absolute http(s) URL. `${ENV}` is expanded. |
+| `webhooks[].format` | `json` | `json` posts agentgate's event object; `slack`, `discord`, `ntfy` post what those services render. |
+| `webhooks[].events` | `deny, ask, honeypot, freeze` | Any of `deny`, `ask`, `honeypot`, `freeze`, `error`, `shadow`. |
+| `webhooks[].headers` | *(none)* | Sent with every request. Values are `${ENV}`-expanded. |
+
 ## `policy`
 
 See [policies.md](policies.md).
+
+## The kill switch marker
+
+`agentgate freeze` writes a marker file next to the audit database —
+`FROZEN` in the same directory as `audit.path`. Every gateway that reads this
+config checks for it on every call. `agentgate status` prints the path.
 
 ## CLI flags
 
@@ -174,8 +224,10 @@ See [policies.md](policies.md).
 | Flag | What it does | Default |
 |---|---|---|
 | `--args` | tool arguments as a JSON object |  |
+| `--at` | evaluate as if the call were made at this time, e.g. "2026-09-04 16:30" or "friday 17:00", to test time rules |  |
 | `--calls-so-far` | pretend this many calls were already made, to test budgets | `0` |
 | `--json` | print the call and the decision as JSON |  |
+| `--repeats` | pretend the identical call was just made this many times, to test the loop guard | `0` |
 | `--tool` | tool name as the host sees it, prefix included |  |
 
 ### `diff <session-a> <session-b> [flags]`
@@ -184,6 +236,15 @@ See [policies.md](policies.md).
 |---|---|---|
 | `--all` | also list calls that are identical |  |
 | `--json` | print the diff as JSON |  |
+
+### `policy suggest [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--loop-guard` | loop_guard.repeats to include; 0 to leave it out | `10` |
+| `--out` | write the policy to this file instead of stdout |  |
+| `--session` | learn from one session instead (id or prefix) |  |
+| `--since` | window to learn from, e.g. 24h, 7d; empty for everything | `7d` |
 
 ### `replay <session-id> [flags]`
 
@@ -218,6 +279,26 @@ See [policies.md](policies.md).
 | `--decision` | only calls with this decision: allow, deny or ask |  |
 | `--json` | print as JSON |  |
 | `--tool` | only calls whose tool name contains this |  |
+
+### `stats [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print as JSON |  |
+| `--markdown` | print as Markdown tables |  |
+| `--session` | summarise one session instead (id or prefix) |  |
+| `--since` | window to summarise, e.g. 1h, 24h, 7d; empty for everything | `24h` |
+| `--top` | how many tools to list | `25` |
+
+### `tail [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--args` | show the arguments on every line |  |
+| `--json` | one JSON object per line |  |
+| `--last` | how many recent calls to show before following | `20` |
+| `--no-follow` | print the recent calls and exit |  |
+| `--session` | only calls of this session (id or prefix) |  |
 
 ### `ui [flags]`
 

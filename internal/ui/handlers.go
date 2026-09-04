@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -27,7 +28,7 @@ func (s *Server) sessionsData(r *http.Request) (*sessionsData, error) {
 	if since == "" && !r.URL.Query().Has("since") {
 		since = "24h"
 	}
-	stats, err := s.opts.Store.Stats(r.Context())
+	stats, err := s.opts.Store.Stats(r.Context(), parseSince(since))
 	if err != nil {
 		return nil, err
 	}
@@ -338,4 +339,48 @@ func jsonish(v any) string {
 		return fmt.Sprint(v)
 	}
 	return string(b)
+}
+
+// handleFreeze throws the kill switch from the browser and sends the visitor
+// back to where they were.
+func (s *Server) handleFreeze(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Freeze == nil {
+		http.Error(w, "this instance cannot freeze the gateway", http.StatusNotFound)
+		return
+	}
+	reason := strings.TrimSpace(r.FormValue("reason"))
+	if reason == "" {
+		reason = "frozen from the web UI"
+	}
+	if err := s.opts.Freeze(reason, "the web UI"); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.log.Warn("gateway frozen from the web UI", "reason", reason)
+	redirectBack(w, r)
+}
+
+func (s *Server) handleUnfreeze(w http.ResponseWriter, r *http.Request) {
+	if s.opts.Unfreeze == nil {
+		http.Error(w, "this instance cannot unfreeze the gateway", http.StatusNotFound)
+		return
+	}
+	if err := s.opts.Unfreeze(); err != nil {
+		s.fail(w, err)
+		return
+	}
+	s.log.Warn("gateway unfrozen from the web UI")
+	redirectBack(w, r)
+}
+
+// redirectBack returns to the page the form was on, or to the front page. Only
+// same-site paths are honoured, so the referer cannot send anyone elsewhere.
+func redirectBack(w http.ResponseWriter, r *http.Request) {
+	to := "/"
+	if ref := r.Header.Get("Referer"); ref != "" {
+		if u, err := url.Parse(ref); err == nil && u.Path != "" && strings.HasPrefix(u.Path, "/") {
+			to = u.Path
+		}
+	}
+	http.Redirect(w, r, to, http.StatusSeeOther)
 }

@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bnymnDev/agentgate/internal/audit"
+	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
@@ -29,18 +32,18 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 	started := time.Now()
 
 	args := req.Params.Arguments
+	signature := b.Exposed + "\x00" + audit.Hash(args)
 	call := &policy.Call{
-		Tool:     b.Exposed,
-		Upstream: b.Upstream,
-		ToolName: b.Name,
-		Args:     decodeArgs(args, p.log),
-		Counts:   st.count(b.Exposed),
+		Tool:        b.Exposed,
+		Upstream:    b.Upstream,
+		ToolName:    b.Name,
+		Args:        decodeArgs(args, p.log),
+		Counts:      st.observe(b.Exposed, signature, started),
+		Annotations: b.Annotations,
+		At:          started,
+		Frozen:      killswitch.Engaged(cfg.FreezeFile()),
 	}
 	decision := policy.Evaluate(&cfg.Policy, call)
-
-	if decision.Action == policy.ActionAsk {
-		decision = p.resolveAsk(ctx, st, b, args, decision)
-	}
 
 	rec := &audit.Call{
 		ID:        audit.NewID(),
@@ -49,9 +52,26 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		Upstream:  b.Upstream,
 		Tool:      b.Exposed,
 		Args:      args,
-		Decision:  decision.Action,
-		RuleID:    decision.RuleID,
-		Reason:    decision.Reason,
+	}
+	event := Event{At: started, SessionID: st.id, Host: hostLabel(st), Upstream: b.Upstream, Tool: b.Exposed, Args: args}
+
+	if decision.Action != policy.ActionAllow && cfg.Policy.IsShadow() {
+		// Shadow mode: the record keeps the verdict, the call goes through.
+		rec.Shadow = true
+		rec.Decision, rec.RuleID, rec.Reason = decision.Action, decision.RuleID, decision.Reason
+		p.log.Info("shadow: would have "+verb(decision.Action),
+			"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
+		event.Event, event.Decision, event.Shadow = config.EventShadow, decision, true
+		p.notify.emit(event)
+		decision = policy.Decision{Action: policy.ActionAllow, RuleID: decision.RuleID,
+			Reason: "shadow mode: would have " + verb(decision.Action) + " (" + decision.Reason + ")"}
+	} else {
+		if decision.Action == policy.ActionAsk {
+			event.Event, event.Decision = config.EventAsk, decision
+			p.notify.emit(event)
+			decision = p.resolveAsk(ctx, st, b, args, decision)
+		}
+		rec.Decision, rec.RuleID, rec.Reason = decision.Action, decision.RuleID, decision.Reason
 	}
 
 	if decision.Action != policy.ActionAllow {
@@ -62,10 +82,11 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		p.store.RecordCall(rec)
 		p.log.Info("call denied",
 			"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
+		event.Event, event.Decision = config.EventDeny, decision
+		p.notify.emit(event)
 		return result, nil
 	}
 
-	st.increment(b.Exposed)
 	p.log.Debug("call allowed",
 		"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
 
@@ -85,22 +106,98 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		rec.Error = timeoutErr.Error()
 		result = errorResult("agentgate: " + timeoutErr.Error())
 		rec.Result = marshalResult(result)
+		st.forwarded(b.Exposed, audit.TokensEst(args), started)
 		p.store.RecordCall(rec)
 		p.log.Warn("call timed out", "session", st.id, "tool", b.Exposed, "timeout", timeout.String())
+		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: timeoutErr.Error()}
+		p.notify.emit(event)
 		return result, nil
 	case err != nil:
 		// A genuine protocol error from the upstream is passed through as one.
 		rec.IsError = true
 		rec.Error = err.Error()
+		st.forwarded(b.Exposed, audit.TokensEst(args), started)
 		p.store.RecordCall(rec)
 		p.log.Warn("call failed", "session", st.id, "tool", b.Exposed, "error", err)
+		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: err.Error()}
+		p.notify.emit(event)
 		return nil, err
+	}
+
+	if cfg.Policy.RedactResults {
+		if n := p.redactResult(result); n > 0 {
+			p.log.Info("redacted secrets from a tool result before the agent saw it",
+				"session", st.id, "tool", b.Exposed, "replacements", n)
+		}
 	}
 
 	rec.Result = marshalResult(result)
 	rec.IsError = result != nil && result.IsError
+	st.forwarded(b.Exposed, audit.TokensEst(args, rec.Result), started)
 	p.store.RecordCall(rec)
 	return result, nil
+}
+
+// verb is the past tense the shadow-mode messages use.
+func verb(a policy.Action) string {
+	switch a {
+	case policy.ActionDeny:
+		return "denied"
+	case policy.ActionAsk:
+		return "asked for approval"
+	default:
+		return "allowed"
+	}
+}
+
+// redactResult applies the redaction patterns to what the agent is about to
+// read. It rewrites text content, embedded text resources and the structured
+// result; binary content is left alone. It returns how many replacements were
+// made.
+func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
+	if res == nil {
+		return 0
+	}
+	r := p.redactor()
+	if !r.Enabled() {
+		return 0
+	}
+	n := 0
+	for i, c := range res.Content {
+		switch t := c.(type) {
+		case *mcp.TextContent:
+			if out := r.RedactString(t.Text); out != t.Text {
+				n += strings.Count(out, audit.Placeholder) - strings.Count(t.Text, audit.Placeholder)
+				clone := *t
+				clone.Text = out
+				res.Content[i] = &clone
+			}
+		case *mcp.EmbeddedResource:
+			if t.Resource != nil && t.Resource.Text != "" {
+				if out := r.RedactString(t.Resource.Text); out != t.Resource.Text {
+					n += strings.Count(out, audit.Placeholder) - strings.Count(t.Resource.Text, audit.Placeholder)
+					resource := *t.Resource
+					resource.Text = out
+					clone := *t
+					clone.Resource = &resource
+					res.Content[i] = &clone
+				}
+			}
+		}
+	}
+	if res.StructuredContent != nil {
+		raw, err := json.Marshal(res.StructuredContent)
+		if err == nil {
+			if out := r.Redact(raw); !bytes.Equal(out, raw) {
+				var v any
+				if json.Unmarshal(out, &v) == nil {
+					n += strings.Count(string(out), audit.Placeholder) - strings.Count(string(raw), audit.Placeholder)
+					res.StructuredContent = v
+				}
+			}
+		}
+	}
+	return n
 }
 
 // forward sends the call upstream unchanged: same arguments, same _meta, same

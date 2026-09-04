@@ -1,86 +1,68 @@
-# agentgate
+<h1 align="center">agentgate</h1>
 
-**Firewall and flight recorder for your AI agent's tools.**
+<p align="center"><strong>Firewall, kill switch and flight recorder for your AI agent's tools.</strong></p>
 
-agentgate sits between an MCP host and the MCP servers it uses. Every `tools/call`
-is checked against a YAML policy, written to a local audit log, and can be
-replayed later against a different policy. Everything else — resources, prompts,
-pings, logging — passes through untouched.
+<p align="center">
+One binary between your MCP host and your MCP servers.<br>
+Every tool call is checked against a policy, recorded, replayable — and stoppable with one command.
+</p>
 
 ```
   MCP host                 agentgate                    MCP servers
 ┌────────────┐   stdio   ┌──────────────────┐  stdio  ┌──────────────┐
 │  your      │──────────▶│ policy   audit   │────────▶│ filesystem   │
-│  agent     │◀──────────│ ├ allow  ├ sqlite│◀────────│ shopware     │
-└────────────┘           │ ├ deny   └ replay│  http   │ your own one │
-                         │ └ ask            │────────▶└──────────────┘
+│  agent     │◀──────────│ ├ allow  ├ sqlite│◀────────│ github       │
+└────────────┘           │ ├ deny   ├ replay│  http   │ shell, db, … │
+                         │ ├ ask    └ tail  │────────▶└──────────────┘
+                         │ └ 🧊 freeze      │
                          └──────────────────┘
 ```
 
-No changes to the host. No changes to the servers. One binary, no cgo, no
-runtime dependencies.
+No changes to the host. No changes to the servers. No cgo, no runtime, no cloud.
 
 ---
 
-## Why
+## Seven things it does that nothing else does
 
-An MCP server is a set of functions you have handed to a language model. Most of
-them are fine. A few of them delete things, spend money or push to `main`. Today
-your options are to trust the model, to not install the server, or to wrap it in
-a shell script you will forget about.
+| | |
+|---|---|
+| 🧊 **Kill switch** | `agentgate freeze` denies every tool call from every agent on the machine, instantly, without dropping a connection. `agentgate unfreeze` when you have looked. |
+| 🪤 **Honeypot tools** | Advertise a tool that does not exist — `db__drop_all_tables` — and find out the moment an agent tries to use it. That is a prompt injection, caught red-handed. Optionally freezes everything on the spot. |
+| 🔁 **Loop guard** | The same call with the same arguments ten times in a row is not diligence, it is a stuck agent burning money. agentgate stops it and tells the model why. |
+| 👻 **Shadow mode** | Run a strict policy without enforcing it. See what it *would* have blocked in the audit log, tune, then flip the switch. |
+| ⏪ **Time-travel policy testing** | `agentgate replay <session> --dry-run` re-runs yesterday's real session against today's policy and shows exactly which decisions change. |
+| 🕵️ **Secret redaction, both ways** | Secrets are scrubbed before they reach the audit log — and, if you say so, before they reach the model. Your agent reads `.env`, the model gets `[REDACTED]`. |
+| 📣 **Slack, Discord, ntfy, anything** | A denial, an approval request, a honeypot trip: get it on your phone. A webhook URL is all it takes. |
 
-agentgate gives you a third option: keep the server, put a rule in front of the
-handful of calls that scare you, and keep a record of everything that happened.
-
-```yaml
-- id: no-destructive-shell
-  tool: "shell.*"
-  when:
-    args.command: { regex: '\brm\s+-rf|\bgit\s+push\s+--force' }
-  action: deny
-  reason: "destructive shell command"
-```
-
-The agent does not get a broken connection. It gets a tool result it can read:
-
-```
-agentgate denied: destructive shell command (rule no-destructive-shell)
-```
-
-…and adapts, which is the whole point.
+Plus the boring parts done properly: a YAML policy language with globs, regexes and JSONPath-lite argument matching; budgets per session, per tool, per minute and per token; rules on what the *server itself* says about a tool (`annotations.destructive: true`); rules on the time of day (no deploys on Friday afternoon); approvals from the terminal or a web UI; a local SQLite audit log with replay, diff, stats and a live `tail`; and a `policy suggest` that writes a deny-by-default policy from what your agent actually did.
 
 ---
 
-## Install
+## 60 seconds
 
 ```sh
-go install github.com/bnymnDev/agentgate/cmd/agentgate@latest
-# or
-brew install bnymnDev/tap/agentgate
+go install github.com/bnymnDev/agentgate/cmd/agentgate@latest   # or: brew install bnymnDev/tap/agentgate
 ```
 
-Prebuilt binaries for linux, macOS and Windows (amd64 and arm64) are on the
-[releases page](https://github.com/bnymnDev/agentgate/releases).
-
----
-
-## 30-second setup
-
-**1. Write `agentgate.yaml`** next to wherever you keep your host config:
+**1.** Write `agentgate.yaml`:
 
 ```yaml
 version: 1
-
-audit:
-  path: ~/.agentgate/audit.db
-  retention: 30d
 
 upstreams:
   - name: fs
     stdio: ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/home/me/repo"]
 
+honeypots:
+  action: freeze
+  tools:
+    - name: fs__delete_everything
+      description: "Recursively delete the whole workspace. Cannot be undone."
+
 policy:
   default: allow
+  loop_guard: { repeats: 10 }
+  budget: { calls_per_minute: 60 }
   rules:
     - id: stay-in-the-repo
       tool: "fs.write_file"
@@ -90,125 +72,98 @@ policy:
       reason: "writes are confined to the repository"
 ```
 
-**2. Point the host at agentgate instead of the server.** Wherever your host
-config used to say
-
-```json
-{ "command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/me/repo"] }
-```
-
-say this instead:
+**2.** Wherever your host config launched the server, launch agentgate instead:
 
 ```json
 { "command": "agentgate", "args": ["run", "--stdio", "--config", "/home/me/agentgate.yaml"] }
 ```
 
-Any MCP host that can launch a stdio server works. The config file lives at:
+Works with any MCP host that starts stdio servers — Claude Code (`.mcp.json`), Claude Desktop (`claude_desktop_config.json`), Cursor (`.cursor/mcp.json`), Zed, Windsurf, your own.
 
-| Host | Config file |
-|---|---|
-| Claude Code | `.mcp.json` in the project, or `claude mcp add` |
-| Claude Desktop | `claude_desktop_config.json` |
-| Cursor | `.cursor/mcp.json` |
-| Anything else | wherever it keeps its `mcpServers` map |
-
-**3. Watch it work.**
+**3.** Watch:
 
 ```sh
-agentgate sessions
-agentgate show 01JD8K2M          # a table of every call
-agentgate ui                     # the same thing in a browser
-```
-
----
-
-## What you get
-
-| | |
-|---|---|
-| **Policy** | Glob or regex on tool names, JSONPath-lite on arguments, eight matchers, first match wins. |
-| **Three verdicts** | `allow`, `deny`, and `ask` — which parks the call until a human clicks or types `y`. |
-| **Budgets** | A cap per session and per tool. Checked before the rules, so nothing can lift one. |
-| **Audit log** | Local SQLite. Arguments, results, decisions, durations, token estimates, sha256 hashes. |
-| **Redaction** | Secrets are scrubbed before they are written, never after. Built-in patterns plus your own. |
-| **Replay** | Re-run yesterday's real session against today's policy and see exactly what changes. |
-| **Diff** | Compare two sessions call by call, aligned so an inserted call does not shift everything. |
-| **Web UI** | Server-rendered, embedded in the binary, no CDN, no Node, dark and light. |
-| **Multiple servers** | Front several MCP servers as one merged tool list, prefixed by server name. |
-| **Transparent** | With no matching rule, bytes in equal bytes out. Resources and prompts are never touched. |
-
----
-
-## The killer feature: replay
-
-You have a session from yesterday where the agent did something you did not
-expect. You write a rule. Now you want to know whether that rule would have
-caught it — and what else it would have broken.
-
-```sh
-agentgate replay 01JD8K2M --dry-run
+agentgate tail
 ```
 
 ```
-replaying session 01JD8K2MQ9Y0RG4T2VN6HB1XZ7 (14 calls) — dry run, nothing is sent
-
- #  TOOL                 WAS    NOW    CHANGE
- ─  ────                 ───    ───    ──────
- 0  fs__read_file        allow  allow
- 1  fs__write_file       allow  deny   allow → deny
- 2  shell__exec          allow  allow
- …
-
-12 allowed, 2 not allowed, 1 decisions changed
-
-changed decisions:
-  fs__write_file                   allow → deny  writes are confined to the repository
+14:02:11  allow   fs__read_file          3ms
+14:02:12  allow   fs__write_file         5ms
+14:02:14  DENY    fs__write_file         0ms  writes are confined to the repository
+14:02:19  🪤 TRAP fs__delete_everything  0ms  honeypot: fs__delete_everything does not exist. Calling it means…
+🧊 the gateway is now FROZEN
 ```
 
-Nothing leaves the machine. Drop `--dry-run` and the allowed calls are actually
-re-sent, and the fresh results are compared with the recorded ones by hash.
+That last line is an agent that was told, somewhere in a file it read, to wipe the workspace. It did not get to.
 
 ---
 
-## Commands
+## The agent gets a reason, not a broken pipe
 
-<!-- BEGIN:commands -->
-| Command | What it does |
-|---|---|
-| `check [flags]` | Dry-evaluate one call against the policy |
-| `diff <session-a> <session-b> [flags]` | Compare two recorded sessions |
-| `policy` | Work with the policy file |
-| `policy validate [file]` | Check that a config file parses and its rules make sense |
-| `replay <session-id> [flags]` | Re-run a recorded session through the current policy |
-| `run [flags]` | Run the proxy |
-| `sessions [flags]` | List recorded sessions |
-| `show <session-id> [flags]` | Show the calls of one session |
-| `ui [flags]` | Browse the audit log in a browser |
-<!-- END:commands -->
+A denied call is not a transport error. It is a tool result the model can read:
 
-Full flag reference: [docs/config.md](docs/config.md).
+```
+agentgate denied: writes are confined to the repository (rule stay-in-the-repo)
+```
+
+…and it adapts. A blocked agent that understands *why* it was blocked stops trying the same thing. One that only sees an error retries until your budget is gone.
 
 ---
 
-## Writing policies
+## Shadow first, enforce later
 
-Rules are evaluated top to bottom and the first match wins. A rule matches when
-its `tool` pattern matches **and** every condition in `when` holds.
+Nobody writes a correct deny-list on the first try. So don't:
 
 ```yaml
 policy:
-  default: allow            # or deny, for a locked-down setup
+  mode: shadow        # record what would happen, block nothing
+```
+
+Run your agent for a day. Then:
+
+```sh
+agentgate stats --since 24h        # what did it actually do?
+agentgate policy suggest > p.yaml  # an allow-list of exactly that, default: deny
+agentgate replay <session> --dry-run   # what would the new policy have changed?
+```
+
+When the only things that flip to `deny` are the ones you meant, delete the `mode: shadow` line.
+
+---
+
+## The policy language, in one screen
+
+```yaml
+policy:
+  default: allow                 # or deny, for a locked-down setup
+  mode: enforce                  # or shadow
+  redact_results: false          # true: secrets never reach the model
   budget:
     calls_per_session: 500
-    calls_per_tool:
-      fs.write_file: 50
-  rules:
-    - id: shopware-writes-need-approval
-      tool: "shopware.*"
+    calls_per_minute: 60
+    tokens_per_session: 200000
+    calls_per_tool: { fs.write_file: 50 }
+  loop_guard:
+    repeats: 10
+  rules:                         # first match wins
+    - id: no-destructive-shell
+      tool: "shell.*"                              # glob, a|b alternation, or /regex/
       when:
-        args.dryRun: { equals: false }
+        args.command: { regex: '\brm\s+-rf|\bgit\s+push\s+--force' }
+      action: deny
+      reason: "destructive shell command"
+
+    - id: ask-before-anything-destructive
+      tool: "*"
+      when: { annotations.destructive: true }      # what the server says about itself
       action: ask
-      reason: "this would change live shop data"
+
+    - id: no-deploys-on-friday-afternoon
+      tool: "*deploy*"
+      when:
+        time.weekday: { equals: "friday" }
+        time.hour: { gt: 15 }
+      action: deny
 ```
 
 Matchers:
@@ -226,16 +181,55 @@ Matchers:
 | `exists` | the path is present (`true`) or absent (`false`) | <code>args.dryRun: { exists: false }</code> |
 <!-- END:matchers -->
 
-The full reference — tool patterns, argument paths, array wildcards, budgets,
-and what happens when a path is missing — is in
-[docs/policies.md](docs/policies.md).
+Paths: `args.path`, `args.items[*].sku`, `tool`, `upstream`, `annotations.destructive`, `time.hour`, `time.weekday`. The whole language, including what happens when a path is missing, is in [docs/policies.md](docs/policies.md).
 
-Check a rule before you ship it:
+Test a rule before you ship it:
 
 ```sh
-agentgate check --tool 'shopware.stock_set' --args '{"stock":0,"dryRun":false}'
+agentgate check --tool 'shell.exec' --args '{"command":"rm -rf /"}'
+agentgate check --tool 'deploy' --at 'friday 17:00'
 agentgate policy validate agentgate.yaml
 ```
+
+---
+
+## Commands
+
+<!-- BEGIN:commands -->
+| Command | What it does |
+|---|---|
+| `check [flags]` | Dry-evaluate one call against the policy |
+| `diff <session-a> <session-b> [flags]` | Compare two recorded sessions |
+| `freeze [reason...]` | Stop every agent: deny all tool calls until unfreeze |
+| `policy` | Work with the policy file |
+| `policy suggest [flags]` | Write a deny-by-default policy from what the agent actually did |
+| `policy validate [file]` | Check that a config file parses and its rules make sense |
+| `replay <session-id> [flags]` | Re-run a recorded session through the current policy |
+| `run [flags]` | Run the proxy |
+| `sessions [flags]` | List recorded sessions |
+| `show <session-id> [flags]` | Show the calls of one session |
+| `stats [flags]` | What did the agent actually do? Per tool, per rule |
+| `status` | Show the gateway's state at a glance |
+| `tail [flags]` | Watch tool calls scroll by, live |
+| `ui [flags]` | Browse the audit log in a browser |
+| `unfreeze` | Lift the kill switch |
+<!-- END:commands -->
+
+Every flag: [docs/config.md](docs/config.md).
+
+---
+
+## Get it on your phone
+
+```yaml
+notify:
+  webhooks:
+    - url: https://ntfy.sh/my-agent          # or a Slack / Discord webhook URL
+      format: ntfy                           # slack | discord | ntfy | json
+      events: [deny, ask, honeypot, freeze]
+```
+
+A honeypot trip arrives as an urgent notification with the arguments the agent used. Arguments are redacted before they leave the machine.
 
 ---
 
@@ -243,12 +237,13 @@ agentgate policy validate agentgate.yaml
 
 | Document | What is in it |
 |---|---|
-| [docs/config.md](docs/config.md) | Every field of `agentgate.yaml`, every CLI flag |
+| [docs/guardrails.md](docs/guardrails.md) | Kill switch, honeypots, loop guard, shadow mode, result redaction — how each one works and when to use it |
 | [docs/policies.md](docs/policies.md) | The rule language in full |
-| [docs/replay.md](docs/replay.md) | Replay and diff, and how to use them to test a policy |
+| [docs/config.md](docs/config.md) | Every field of `agentgate.yaml`, every CLI flag |
+| [docs/replay.md](docs/replay.md) | Replay, diff, stats, and the shadow → suggest → enforce workflow |
 | [docs/architecture.md](docs/architecture.md) | How the proxy works, and what it deliberately does not do |
-| [docs/comparison.md](docs/comparison.md) | Versus running servers raw, versus wrapper scripts |
-| [docs/decisions.md](docs/decisions.md) | Design decisions and why they went that way |
+| [docs/comparison.md](docs/comparison.md) | Versus raw servers, wrapper scripts, host prompts and sandboxes |
+| [docs/decisions.md](docs/decisions.md) | Design decisions and the reasoning behind each |
 
 ---
 
@@ -258,32 +253,17 @@ agentgate policy validate agentgate.yaml
 make build      # bin/agentgate
 make test       # unit tests and policy golden files
 make e2e        # the real binary in front of a real MCP server
-make dev        # the proxy plus the web UI against a demo server
+make dev        # proxy + web UI against a demo server, nothing to install
 make lint
 ```
 
-`make dev` needs nothing installed: it builds a small demo MCP server from
-`testdata/servers/echo`, puts agentgate in front of it, and opens the proxy on
-`127.0.0.1:3333` with the UI on `127.0.0.1:7777`.
-
 ---
 
-## Status and roadmap
+## Status
 
-v0.1 is feature complete. What is deliberately **not** in it: asking a model whether a call looks safe, central or multi-user
-management, governing prompts and resources, and authentication in front of the
-web UI (keep it on localhost).
+v0.2. Everything in this README is implemented and covered by tests, including the end-to-end suite that drives the real binary. Not in it, on purpose: asking a model whether a call is safe (rules are deterministic so that `replay` can be trusted), central or multi-user management, governing prompts and resources (they pass through untouched), and authentication in front of the web UI (it refuses to bind to anything but localhost unless you insist).
 
-- [x] stdio and Streamable HTTP on both sides, multiple upstreams, prefixing
-- [x] policy model, evaluator, golden tests, budgets, `check`, `policy validate`
-- [x] SQLite audit store with redaction, retention and result caps
-- [x] `sessions`, `show`, `replay`, `diff`, embedded web UI, hot reload
-- [x] approvals over the terminal and over the web UI
-- [ ] a demo GIF for this README
-- [ ] approval rules that remember a decision for the rest of a session
-- [ ] a `--record-only` mode for a first pass with no policy at all
-
----
+Roadmap: a demo GIF for this page, per-session "allow for the rest of this session" approvals, and a `--record-only` mode.
 
 ## License
 

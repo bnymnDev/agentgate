@@ -126,8 +126,15 @@ type CallFilter struct {
 	// Decision keeps only calls with this decision. Empty means all.
 	Decision policy.Action
 	// Tool keeps only calls whose tool name contains this substring.
-	Tool  string
-	Limit int
+	Tool string
+	// AfterID keeps only calls whose id sorts after this one. Ids are ULIDs,
+	// so this is "everything newer than the last thing I saw" — what tail uses.
+	AfterID string
+	// Since keeps only calls made at or after this time.
+	Since time.Time
+	// RuleID keeps only calls decided by this rule id.
+	RuleID string
+	Limit  int
 }
 
 // ListCalls returns the calls of a session in the order they were made.
@@ -148,6 +155,18 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 		conds = append(conds, `tool LIKE ? ESCAPE '\'`)
 		args = append(args, "%"+escapeLike(f.Tool)+"%")
 	}
+	if f.AfterID != "" {
+		conds = append(conds, "id > ?")
+		args = append(args, f.AfterID)
+	}
+	if !f.Since.IsZero() {
+		conds = append(conds, "ts >= ?")
+		args = append(args, f.Since.UnixMilli())
+	}
+	if f.RuleID != "" {
+		conds = append(conds, "rule_id = ?")
+		args = append(args, f.RuleID)
+	}
 	where := ""
 	if len(conds) > 0 {
 		where = "WHERE " + strings.Join(conds, " AND ")
@@ -160,7 +179,7 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
 		       reason, result_json, result_hash, is_error, duration_ms, tokens_est,
-		       result_truncated, error
+		       result_truncated, error, shadow
 		FROM calls %s ORDER BY ts ASC, id ASC LIMIT ?`, where), args...)
 	if err != nil {
 		return nil, err
@@ -182,7 +201,7 @@ func (s *Store) GetCall(ctx context.Context, id string) (*Call, error) {
 	row := s.db.QueryRowContext(ctx, `
 		SELECT id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
 		       reason, result_json, result_hash, is_error, duration_ms, tokens_est,
-		       result_truncated, error
+		       result_truncated, error, shadow
 		FROM calls WHERE id = ?`, id)
 	c, err := scanCall(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -200,16 +219,18 @@ func scanCall(sc scanner) (*Call, error) {
 		decision   string
 		isErr      int
 		truncated  int
+		shadow     int
 	)
 	if err := sc.Scan(&c.ID, &c.SessionID, &ts, &c.Upstream, &c.Tool, &argsJSON, &c.ArgsHash,
 		&decision, &c.RuleID, &c.Reason, &resultJSON, &c.ResultHash, &isErr,
-		&c.DurationMS, &c.TokensEst, &truncated, &c.Error); err != nil {
+		&c.DurationMS, &c.TokensEst, &truncated, &c.Error, &shadow); err != nil {
 		return nil, err
 	}
 	c.TS = time.UnixMilli(ts)
 	c.Decision = policy.Action(decision)
 	c.IsError = isErr != 0
 	c.ResultTruncated = truncated != 0
+	c.Shadow = shadow != 0
 	if argsJSON != "" {
 		c.Args = json.RawMessage(argsJSON)
 	}
@@ -221,27 +242,146 @@ func scanCall(sc scanner) (*Call, error) {
 
 // Stats is the headline the web UI shows above the session list.
 type Stats struct {
-	Sessions int `json:"sessions"`
-	Calls    int `json:"calls"`
-	Denied   int `json:"denied"`
-	Errors   int `json:"errors"`
-	Tokens   int `json:"tokens_est"`
+	Sessions  int `json:"sessions"`
+	Calls     int `json:"calls"`
+	Denied    int `json:"denied"`
+	Shadowed  int `json:"shadowed"`
+	Honeypots int `json:"honeypots"`
+	Errors    int `json:"errors"`
+	Tokens    int `json:"tokens_est"`
 }
 
-// Stats aggregates the whole database.
-func (s *Store) Stats(ctx context.Context) (*Stats, error) {
+// Stats aggregates the database, or the part of it since a time.
+func (s *Store) Stats(ctx context.Context, since time.Time) (*Stats, error) {
 	var st Stats
+	cut := int64(0)
+	if !since.IsZero() {
+		cut = since.UnixMilli()
+	}
 	err := s.db.QueryRowContext(ctx, `
-		SELECT (SELECT COUNT(*) FROM sessions),
-		       (SELECT COUNT(*) FROM calls),
-		       (SELECT COUNT(*) FROM calls WHERE decision = 'deny'),
-		       (SELECT COUNT(*) FROM calls WHERE is_error = 1),
-		       (SELECT COALESCE(SUM(tokens_est), 0) FROM calls)`).
-		Scan(&st.Sessions, &st.Calls, &st.Denied, &st.Errors, &st.Tokens)
+		SELECT (SELECT COUNT(*) FROM sessions WHERE started_at >= ?),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ?),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND decision = 'deny' AND shadow = 0),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND shadow = 1),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND rule_id = ?),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND is_error = 1 AND decision = 'allow'),
+		       (SELECT COALESCE(SUM(tokens_est), 0) FROM calls WHERE ts >= ?)`,
+		cut, cut, cut, cut, cut, policy.RuleHoneypot, cut, cut).
+		Scan(&st.Sessions, &st.Calls, &st.Denied, &st.Shadowed, &st.Honeypots, &st.Errors, &st.Tokens)
 	if err != nil {
 		return nil, err
 	}
 	return &st, nil
+}
+
+// ToolStat is one row of the per-tool breakdown.
+type ToolStat struct {
+	Tool      string    `json:"tool"`
+	Upstream  string    `json:"upstream"`
+	Calls     int       `json:"calls"`
+	Allowed   int       `json:"allowed"`
+	Denied    int       `json:"denied"`
+	Asked     int       `json:"asked"`
+	Errors    int       `json:"errors"`
+	AvgMS     float64   `json:"avg_ms"`
+	Tokens    int       `json:"tokens_est"`
+	LastRule  string    `json:"last_rule,omitempty"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
+}
+
+// ToolStats breaks the calls since a time down by tool, busiest first.
+func (s *Store) ToolStats(ctx context.Context, since time.Time, sessionID string) ([]*ToolStat, error) {
+	var (
+		conds []string
+		args  []any
+	)
+	if !since.IsZero() {
+		conds = append(conds, "ts >= ?")
+		args = append(args, since.UnixMilli())
+	}
+	if sessionID != "" {
+		conds = append(conds, "session_id = ?")
+		args = append(args, sessionID)
+	}
+	where := ""
+	if len(conds) > 0 {
+		where = "WHERE " + strings.Join(conds, " AND ")
+	}
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+		SELECT tool, MAX(upstream), COUNT(*),
+		       SUM(CASE WHEN decision = 'allow' OR shadow = 1 THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN decision = 'deny' AND shadow = 0 THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN decision = 'ask' THEN 1 ELSE 0 END),
+		       SUM(CASE WHEN is_error = 1 AND decision = 'allow' THEN 1 ELSE 0 END),
+		       AVG(CASE WHEN decision = 'allow' THEN duration_ms END),
+		       COALESCE(SUM(tokens_est), 0),
+		       MIN(ts), MAX(ts)
+		FROM calls %s
+		GROUP BY tool
+		ORDER BY COUNT(*) DESC, tool ASC`, where), args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*ToolStat
+	for rows.Next() {
+		var (
+			st          ToolStat
+			avg         sql.NullFloat64
+			first, last int64
+		)
+		if err := rows.Scan(&st.Tool, &st.Upstream, &st.Calls, &st.Allowed, &st.Denied, &st.Asked,
+			&st.Errors, &avg, &st.Tokens, &first, &last); err != nil {
+			return nil, err
+		}
+		st.AvgMS = avg.Float64
+		st.FirstSeen = time.UnixMilli(first)
+		st.LastSeen = time.UnixMilli(last)
+		out = append(out, &st)
+	}
+	return out, rows.Err()
+}
+
+// RuleStat counts how often a rule decided something.
+type RuleStat struct {
+	RuleID   string        `json:"rule_id"`
+	Decision policy.Action `json:"decision"`
+	Calls    int           `json:"calls"`
+}
+
+// RuleStats lists the rules that fired since a time, most active first.
+func (s *Store) RuleStats(ctx context.Context, since time.Time, sessionID string) ([]*RuleStat, error) {
+	conds := []string{"rule_id != ''"}
+	var args []any
+	if !since.IsZero() {
+		conds = append(conds, "ts >= ?")
+		args = append(args, since.UnixMilli())
+	}
+	if sessionID != "" {
+		conds = append(conds, "session_id = ?")
+		args = append(args, sessionID)
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT rule_id, decision, COUNT(*) FROM calls WHERE `+strings.Join(conds, " AND ")+`
+		GROUP BY rule_id, decision ORDER BY COUNT(*) DESC, rule_id ASC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []*RuleStat
+	for rows.Next() {
+		var (
+			st       RuleStat
+			decision string
+		)
+		if err := rows.Scan(&st.RuleID, &decision, &st.Calls); err != nil {
+			return nil, err
+		}
+		st.Decision = policy.Action(decision)
+		out = append(out, &st)
+	}
+	return out, rows.Err()
 }
 
 func escapeLike(s string) string {

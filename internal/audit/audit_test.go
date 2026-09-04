@@ -2,6 +2,7 @@ package audit
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"regexp"
@@ -33,13 +34,46 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	first := openTemp(t, Options{Path: path})
 	v, err := first.SchemaVersion(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "0001_init", v)
+	require.Equal(t, "0002_shadow", v)
 
 	// Opening the same file again must not try to re-apply anything.
 	second := openTemp(t, Options{Path: path})
 	v2, err := second.SchemaVersion(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, v, v2)
+}
+
+// TestOlderDatabaseIsUpgraded builds a database the way the first release did
+// and checks that opening it today brings it up to date without losing rows.
+func TestOlderDatabaseIsUpgraded(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "audit.db")
+
+	db, err := sql.Open("sqlite", dsn(path, false))
+	require.NoError(t, err)
+	init0001, err := migrationFS.ReadFile("migrations/0001_init.sql")
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `CREATE TABLE schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, string(init0001))
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO schema_migrations VALUES ('0001_init', 0)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO sessions (id, started_at) VALUES ('old', 1)`)
+	require.NoError(t, err)
+	_, err = db.ExecContext(ctx, `INSERT INTO calls (id, session_id, ts, tool, decision) VALUES ('c1', 'old', 1, 'x', 'allow')`)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	store := openTemp(t, Options{Path: path})
+	v, err := store.SchemaVersion(ctx)
+	require.NoError(t, err)
+	require.Equal(t, "0002_shadow", v)
+
+	calls, err := store.ListCalls(ctx, CallFilter{SessionID: "old"})
+	require.NoError(t, err)
+	require.Len(t, calls, 1)
+	require.False(t, calls[0].Shadow, "a pre-upgrade row is not a shadow decision")
 }
 
 func TestSessionAndCallRoundTrip(t *testing.T) {

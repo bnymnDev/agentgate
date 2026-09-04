@@ -1,0 +1,21 @@
+{
+  "policy": "guardrails",
+  "calls": [
+    {"tool": "t__anything", "upstream": "t", "tool_name": "anything", "args": {}, "frozen": true},
+    {"tool": "t__poll", "upstream": "t", "tool_name": "poll", "args": {"id": 1}, "counts": {"repeats": 1}},
+    {"tool": "t__poll", "upstream": "t", "tool_name": "poll", "args": {"id": 1}, "counts": {"repeats": 2}},
+    {"tool": "t__poll", "upstream": "t", "tool_name": "poll", "args": {"id": 1}, "counts": {"repeats": 7}},
+    {"tool": "t__fast", "upstream": "t", "tool_name": "fast", "args": {}, "counts": {"last_minute": 2}},
+    {"tool": "t__fast", "upstream": "t", "tool_name": "fast", "args": {}, "counts": {"last_minute": 3}},
+    {"tool": "t__chatty", "upstream": "t", "tool_name": "chatty", "args": {}, "counts": {"tokens": 999}},
+    {"tool": "t__chatty", "upstream": "t", "tool_name": "chatty", "args": {}, "counts": {"tokens": 1000}},
+    {"tool": "t__wipe", "upstream": "t", "tool_name": "wipe", "args": {}, "annotations": {"destructive": true}},
+    {"tool": "t__list", "upstream": "t", "tool_name": "list", "args": {}, "annotations": {"read_only": true, "destructive": false}},
+    {"tool": "t__unlabelled", "upstream": "t", "tool_name": "unlabelled", "args": {}},
+    {"tool": "t__deploy", "upstream": "t", "tool_name": "deploy", "args": {}, "at": "2026-09-04T16:30:00Z"},
+    {"tool": "t__deploy", "upstream": "t", "tool_name": "deploy", "args": {}, "at": "2026-09-04T09:00:00Z"},
+    {"tool": "t__deploy", "upstream": "t", "tool_name": "deploy", "args": {}, "at": "2026-09-06T12:00:00Z"},
+    {"tool": "t__deploy", "upstream": "t", "tool_name": "deploy", "args": {}, "at": "2026-09-02T12:00:00Z"},
+    {"tool": "t__deploy", "upstream": "t", "tool_name": "deploy", "args": {}}
+  ]
+}

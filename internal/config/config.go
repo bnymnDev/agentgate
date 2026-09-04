@@ -38,6 +38,8 @@ type Config struct {
 	Audit           Audit         `yaml:"audit"`
 	Upstreams       []Upstream    `yaml:"upstreams"`
 	Policy          policy.Policy `yaml:"policy"`
+	Honeypots       Honeypots     `yaml:"honeypots"`
+	Notify          Notify        `yaml:"notify"`
 
 	// Path is the file the config was read from. It is not part of the file.
 	Path string `yaml:"-"`
@@ -235,7 +237,20 @@ func (c *Config) normalize() error {
 	if err := c.Policy.Compile(); err != nil {
 		errs = append(errs, err)
 	}
+	if err := c.Honeypots.normalize(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Notify.normalize(); err != nil {
+		errs = append(errs, err)
+	}
 	return errors.Join(errs...)
+}
+
+// FreezeFile is the path of the kill-switch marker. It sits next to the audit
+// database so that every agentgate process reading the same config agrees on
+// it, and so that `agentgate freeze` works with no proxy running at all.
+func (c *Config) FreezeFile() string {
+	return filepath.Join(filepath.Dir(c.Audit.Path), "FROZEN")
 }
 
 // AuditEnabled reports whether calls should be recorded.

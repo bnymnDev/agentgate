@@ -8,6 +8,8 @@ import (
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
 // catalog is the merged view of everything the upstreams offer. It exists so
@@ -22,6 +24,7 @@ type catalog struct {
 	resources map[string]string // uri -> upstream name
 	templates map[string]string // uriTemplate -> upstream name
 	prompts   map[string]string // prompt name -> upstream name
+	honeypots map[string]bool   // decoys currently registered on the server
 }
 
 // ToolBinding maps an exposed tool name back to its upstream.
@@ -32,6 +35,36 @@ type ToolBinding struct {
 	Name string
 	// Upstream is the configured upstream name.
 	Upstream string
+	// Annotations are the server's hints about the tool, for annotations.*
+	// conditions.
+	Annotations policy.Annotations
+}
+
+// annotationsOf translates the server's hints into the policy's view of them,
+// applying the MCP defaults: a tool that has annotations but says nothing
+// about destructiveHint is destructive, and one that says nothing about
+// openWorldHint is open-world. A tool with no annotations at all says nothing,
+// and every annotations.* condition on it is missing.
+func annotationsOf(t *mcp.Tool) policy.Annotations {
+	if t.Annotations == nil {
+		return policy.Annotations{}
+	}
+	a := t.Annotations
+	readOnly, idempotent := a.ReadOnlyHint, a.IdempotentHint
+	destructive, openWorld := true, true
+	if a.DestructiveHint != nil {
+		destructive = *a.DestructiveHint
+	}
+	if a.OpenWorldHint != nil {
+		openWorld = *a.OpenWorldHint
+	}
+	return policy.Annotations{
+		Title:       a.Title,
+		ReadOnly:    &readOnly,
+		Destructive: &destructive,
+		Idempotent:  &idempotent,
+		OpenWorld:   &openWorld,
+	}
 }
 
 // Tools returns the current catalog, sorted by exposed name.
@@ -61,6 +94,11 @@ func (p *Proxy) Lookup(exposed string) (ToolBinding, bool) {
 // registers it on the downstream server. Adding and removing features on the
 // server is what makes the SDK emit the matching list_changed notifications.
 func (p *Proxy) Refresh(ctx context.Context) error {
+	// Two upstreams announcing changes at once must not interleave their
+	// add/remove calls on the server.
+	p.refreshMu.Lock()
+	defer p.refreshMu.Unlock()
+
 	cfg := p.Config()
 	var errs []error
 
@@ -107,7 +145,7 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 						exposed, other.Upstream, u.name()))
 					continue
 				}
-				binding := &ToolBinding{Exposed: exposed, Name: tool.Name, Upstream: u.name()}
+				binding := &ToolBinding{Exposed: exposed, Name: tool.Name, Upstream: u.name(), Annotations: annotationsOf(tool)}
 				tools[exposed] = binding
 				clone := *tool
 				clone.Name = exposed
@@ -197,6 +235,7 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 	for _, pr := range newPrompts {
 		p.server.AddPrompt(pr.prompt, p.promptHandler(pr.up))
 	}
+	p.registerHoneypots(cfg)
 
 	p.log.Info("catalog refreshed",
 		"tools", len(tools), "resources", len(resources), "prompts", len(prompts),

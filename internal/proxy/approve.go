@@ -55,7 +55,30 @@ type TTYApprover struct {
 	In  io.Reader
 	Out io.Writer
 
-	mu sync.Mutex
+	mu    sync.Mutex
+	once  sync.Once
+	lines chan string
+}
+
+// reader starts the single goroutine that owns the terminal's input. Two
+// scanners on one reader would race for bytes, and a scanner abandoned by a
+// question that timed out would eat the answer to the next one.
+func (t *TTYApprover) reader() <-chan string {
+	t.once.Do(func() {
+		t.lines = make(chan string, 8)
+		go func() {
+			scanner := bufio.NewScanner(t.In)
+			for scanner.Scan() {
+				select {
+				case t.lines <- strings.TrimSpace(strings.ToLower(scanner.Text())):
+				default:
+					// Nobody is asking; whatever was typed is not an answer.
+				}
+			}
+			close(t.lines)
+		}()
+	})
+	return t.lines
 }
 
 // Approve prints the call and waits for y or n.
@@ -76,21 +99,27 @@ func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (policy.
 		fmt.Fprintf(t.Out, "  allow this call? [y/N] ")
 	}
 
-	answers := make(chan string, 1)
-	go func() {
-		scanner := bufio.NewScanner(t.In)
-		if scanner.Scan() {
-			answers <- strings.TrimSpace(strings.ToLower(scanner.Text()))
-			return
+	lines := t.reader()
+	// Anything typed before the question was asked is not an answer to it.
+	for drained := false; !drained; {
+		select {
+		case _, ok := <-lines:
+			if !ok {
+				drained = true
+			}
+		default:
+			drained = true
 		}
-		answers <- ""
-	}()
+	}
 
 	select {
 	case <-ctx.Done():
 		fmt.Fprintf(t.Out, "\n  no answer, denied\n")
 		return policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}, nil
-	case answer := <-answers:
+	case answer, ok := <-lines:
+		if !ok {
+			return policy.Decision{Action: policy.ActionDeny, Reason: "approval required, the terminal was closed"}, nil
+		}
 		if answer == "y" || answer == "yes" {
 			fmt.Fprintf(t.Out, "  allowed\n")
 			return policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal"}, nil

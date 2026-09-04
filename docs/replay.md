@@ -59,7 +59,7 @@ answer changed.
 ```
  #  TOOL                 WAS    NOW    CHANGE  RESULT
  0  fs__read_file        allow  allow          same
- 1  shopware__order_get  allow  allow          differs
+ 1  github__get_issue    allow  allow          differs
 ```
 
 `--only-allowed` skips calls that were denied when they were recorded, which is
@@ -88,7 +88,7 @@ b  01JD9P4XR1Z8TH5V3WQ7JC2YB9
    TOOL                 STATUS    A              B
 ~  fs__write_file       args      allow 4f3a2b1c  allow 9d8e7f6a
 +  shell__exec          only-b    -              allow 1a2b3c4d
-~  shopware__order_get  result    allow 5e6f7a8b  allow c4d3e2f1
+~  github__get_issue    result    allow 5e6f7a8b  allow c4d3e2f1
 
 11 same, 1 different arguments, 1 different results, 0 different decisions, 0 only in a, 1 only in b
 ```
@@ -115,11 +115,58 @@ agentgate diff "$BASELINE" "$LATEST" || echo "the agent did something new"
 
 Both commands take `--json` for anything you want to script.
 
+## Stats: what did it actually do?
+
+```sh
+agentgate stats --since 24h
+agentgate stats --session 01JD8K2M
+agentgate stats --since 7d --markdown     # paste into a PR or a post
+```
+
+```
+agentgate stats — last 24h
+
+  sessions 6      calls 412    denied 9      shadowed 0      honeypot trips 1    errors 2    tokens ~148k
+
+TOOL                CALLS  ALLOWED  DENIED  ERRORS  AVG MS  TOKENS  LAST SEEN
+────                ─────  ───────  ──────  ──────  ──────  ──────  ─────────
+fs__read_file       201    201      0       0       4       92k     09-04 14:31
+shell__exec         88     81       7       2       213     31k     09-04 14:30
+fs__write_file      54     52       2       0       6       18k     09-04 14:29
+db__drop_all_tables 1      0        1       0       0       0       09-04 11:02
+
+RULE                    DECISION  TIMES
+no-destructive-shell    deny      7
+stay-in-the-repo        deny      2
+honeypot                deny      1
+```
+
+## Suggest: write the allow-list for me
+
+```sh
+agentgate policy suggest --since 7d
+agentgate policy suggest --session 01JD8K2M --out policy.yaml
+```
+
+Reads the same window and prints a complete `policy:` section: `default:
+deny`, one `allow` rule per tool the agent actually used (with the observed
+call count as its reason), a session budget a little above the busiest session
+seen, and a loop guard. Tools that were only ever denied get a comment, not a
+rule. Honeypot trips are called out.
+
+It is a starting point, not a verdict — read it, tighten it, then
+`agentgate policy validate` it.
+
 ## A workflow that works
 
 1. Run with `default: allow` and no rules for a day. You now have a corpus.
-2. Look at what actually happened: `agentgate sessions`, then `agentgate ui`.
-3. Write the rules you wish had been there.
+   (Or run the strict policy you have in mind with `mode: shadow`, which
+   records what it would have done and blocks nothing.)
+2. Look at what actually happened: `agentgate stats --since 24h`, then
+   `agentgate ui`.
+3. `agentgate policy suggest > policy.yaml` for a deny-by-default draft, or
+   write the rules you wish had been there.
 4. `agentgate replay <yesterday> --dry-run` for each interesting session.
 5. Tighten until the only things that flip to `deny` are the ones you meant.
-6. Switch `default` to `deny` when the allow-list is complete enough.
+6. Remove `mode: shadow`, or switch `default` to `deny`, when the allow-list
+   is complete enough.

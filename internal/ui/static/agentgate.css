@@ -70,3 +70,20 @@ details.call h6 { margin-bottom: 0.3rem; }
 .status.good { border-left: 3px solid var(--ag-allow); }
 .status.bad { border-left: 3px solid var(--ag-deny); }
 .status pre { margin-bottom: 0; }
+
+.badge.shadow   { color: var(--ag-error); border-style: dashed; }
+.badge.honeypot { color: var(--ag-deny); background: color-mix(in srgb, var(--ag-deny) 12%, transparent); }
+details.call.shadow { border-left-style: dashed; }
+details.call.honeypot { border-left-color: var(--ag-deny); background: color-mix(in srgb, var(--ag-deny) 6%, transparent); }
+.stats article.alert h3 { color: var(--ag-deny); }
+
+article.frozen {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  border-left: 4px solid var(--ag-deny);
+  background: color-mix(in srgb, var(--ag-deny) 10%, transparent);
+}
+article.frozen form { margin: 0; }
+article.frozen button { margin: 0; white-space: nowrap; }
+.freeze-form { display: flex; justify-content: flex-end; margin-bottom: 0.5rem; }
+.freeze-button { width: auto; padding: 0.35rem 0.8rem; font-size: 0.85rem; margin: 0; }
+.shadow-note { margin: 0 0 1rem; }

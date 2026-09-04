@@ -1,0 +1,13 @@
+# Golden files and fixtures are compared byte for byte; never let a Windows
+# checkout turn their line endings into CRLF.
+* text=auto eol=lf
+*.golden text eol=lf
+*.go text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+*.sql text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+Makefile text eol=lf

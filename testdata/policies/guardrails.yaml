@@ -1,0 +1,40 @@
+# The hard stops that are not rules: the kill switch, the loop guard, the rate
+# limit and the token budget, plus conditions on server annotations and on the
+# time of day. One golden case per behaviour.
+version: 1
+upstreams:
+  - name: t
+    stdio: ["testdata/servers/echo"]
+    prefix: true
+policy:
+  default: allow
+  budget:
+    calls_per_minute: 3
+    tokens_per_session: 1000
+  loop_guard:
+    repeats: 2
+  rules:
+    - id: ask-before-destructive
+      tool: "*"
+      when: { annotations.destructive: true }
+      action: ask
+      reason: "the server marks this tool as destructive"
+
+    - id: read-only-is-fine
+      tool: "*"
+      when: { annotations.read_only: true }
+      action: allow
+
+    - id: no-deploys-on-friday-afternoon
+      tool: "t.deploy"
+      when:
+        time.weekday: { equals: "friday" }
+        time.hour: { gt: 15 }
+      action: deny
+      reason: "no deploys on Friday afternoon"
+
+    - id: weekends-need-approval
+      tool: "t.deploy"
+      when:
+        time.weekday: { in: ["saturday", "sunday"] }
+      action: ask

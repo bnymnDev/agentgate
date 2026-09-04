@@ -8,6 +8,8 @@
   <article><h3>{{.Stats.Sessions}}</h3><small>sessions</small></article>
   <article><h3>{{.Stats.Calls}}</h3><small>calls</small></article>
   <article><h3>{{.Stats.Denied}}</h3><small>denied</small></article>
+  <article><h3>{{.Stats.Shadowed}}</h3><small>shadowed</small></article>
+  <article{{if .Stats.Honeypots}} class="alert"{{end}}><h3>{{.Stats.Honeypots}}</h3><small>honeypot trips</small></article>
   <article><h3>{{.Stats.Errors}}</h3><small>errors</small></article>
   <article><h3>{{tokens .Stats.Tokens}}</h3><small>tokens (est.)</small></article>
 </div>
