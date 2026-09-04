@@ -13,6 +13,7 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/proxy"
 	"github.com/bnymnDev/agentgate/internal/ui"
 )
@@ -93,6 +94,7 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 	p, err := proxy.New(proxy.Options{
 		Config:              cfg,
 		Store:               store,
+		Redactor:            audit.NewRedactor(cfg.Audit.Redactors()),
 		Logger:              log,
 		Approver:            buildApprover(cfg, inbox, opts.uiAddr != "", log),
 		DownstreamTransport: transport,
@@ -111,6 +113,16 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 
 	for _, b := range p.Tools() {
 		log.Debug("tool available", "tool", b.Exposed, "upstream", b.Upstream)
+	}
+	if st, frozen := killswitch.Status(cfg.FreezeFile()); frozen {
+		log.Warn("the gateway is FROZEN: every call will be denied until `agentgate unfreeze`",
+			"since", st.At.Format(time.RFC3339), "by", st.By, "reason", st.Reason)
+	}
+	if n := len(cfg.Honeypots.Tools); n > 0 {
+		log.Info("honeypots armed", "count", n, "on_trip", cfg.Honeypots.Action)
+	}
+	if cfg.Policy.IsShadow() {
+		log.Warn("policy is in shadow mode: decisions are recorded, nothing is blocked")
 	}
 	log.Info("proxy ready", "tools", len(p.Tools()))
 
@@ -198,8 +210,10 @@ func buildUIServer(opts runOptions, cfg *config.Config, store *audit.Store, inbo
 			p.SetPolicy(&fresh.Policy)
 			return fresh, nil
 		},
-		Logger:  log,
-		Version: version(),
+		Freeze:   p.Freeze,
+		Unfreeze: p.Unfreeze,
+		Logger:   log,
+		Version:  version(),
 	})
 	if err != nil {
 		return nil, err

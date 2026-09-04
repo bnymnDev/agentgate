@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/ui"
 )
 
@@ -41,10 +42,15 @@ because there is no proxy running behind it.`,
 			defer closeStore(store)
 
 			srv, err := ui.New(ui.Options{
-				Store:   store,
-				Config:  func() *config.Config { return cfg },
-				Logger:  log,
-				Version: version(),
+				Store:  store,
+				Config: func() *config.Config { return cfg },
+				Freeze: func(reason, by string) error {
+					_, err := killswitch.Engage(cfg.FreezeFile(), reason, by)
+					return err
+				},
+				Unfreeze: func() error { return killswitch.Release(cfg.FreezeFile()) },
+				Logger:   log,
+				Version:  version(),
 			})
 			if err != nil {
 				return err

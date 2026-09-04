@@ -60,10 +60,17 @@ upstreams:
   - name: demo
     stdio: [%q]
     prefix: true
+honeypots:
+  action: deny
+  tools:
+    - name: demo__drop_database
+      description: "Drop the production database. Irreversible."
 policy:
   default: allow
   budget:
     calls_per_session: 20
+  loop_guard:
+    repeats: 3
   rules:
     - id: no-destructive-shell
       tool: "demo.exec"
@@ -180,6 +187,47 @@ func TestEndToEnd(t *testing.T) {
 		require.Contains(t, text(t, res), "sk-not-a-real-key")
 	})
 
+	t.Run("a honeypot is listed and trips", func(t *testing.T) {
+		tools, err := session.ListTools(ctx, nil)
+		require.NoError(t, err)
+		var names []string
+		for _, tool := range tools.Tools {
+			names = append(names, tool.Name)
+		}
+		require.Contains(t, names, "demo__drop_database")
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "demo__drop_database", Arguments: map[string]any{}})
+		require.NoError(t, err)
+		require.True(t, res.IsError)
+		require.Contains(t, text(t, res), "honeypot")
+	})
+
+	t.Run("the loop guard stops a stuck agent", func(t *testing.T) {
+		for i := range 3 {
+			res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "demo__echo", Arguments: map[string]any{"text": "loop"}})
+			require.NoError(t, err)
+			require.False(t, res.IsError, "call %d should still pass", i)
+		}
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "demo__echo", Arguments: map[string]any{"text": "loop"}})
+		require.NoError(t, err)
+		require.True(t, res.IsError)
+		require.Contains(t, text(t, res), "loop guard")
+	})
+
+	t.Run("the kill switch works from another process", func(t *testing.T) {
+		out := e.run(t, "freeze", "e2e", "says", "stop")
+		require.Contains(t, out, "frozen: e2e says stop")
+		res, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "demo__echo", Arguments: map[string]any{"text": "hi"}})
+		require.NoError(t, err)
+		require.True(t, res.IsError)
+		require.Contains(t, text(t, res), "frozen")
+		require.Contains(t, e.run(t, "status"), "FROZEN")
+
+		require.Contains(t, e.run(t, "unfreeze"), "unfrozen")
+		res, err = session.CallTool(ctx, &mcp.CallToolParams{Name: "demo__echo", Arguments: map[string]any{"text": "hi"}})
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+	})
+
 	t.Run("resources and prompts pass through", func(t *testing.T) {
 		resources, err := session.ListResources(ctx, nil)
 		require.NoError(t, err)
@@ -231,6 +279,25 @@ func TestEndToEnd(t *testing.T) {
 		replay := e.run(t, "replay", id, "--dry-run")
 		require.Contains(t, replay, "dry run, nothing is sent")
 		require.Contains(t, replay, "demo__exec")
+
+		tail := e.run(t, "tail", "--no-follow", "--last", "100")
+		require.Contains(t, tail, "TRAP")
+		require.Contains(t, tail, "DENY")
+		require.Contains(t, tail, "demo__drop_database")
+
+		stats := e.run(t, "stats", "--since", "")
+		require.Contains(t, stats, "honeypot trips 1")
+		require.Contains(t, stats, "demo__echo")
+		require.Contains(t, e.run(t, "stats", "--markdown", "--since", ""), "| `demo__echo` |")
+
+		suggested := e.run(t, "policy", "suggest", "--since", "")
+		require.Contains(t, suggested, "default: deny")
+		require.Contains(t, suggested, `tool: "demo__echo"`)
+		require.Contains(t, suggested, "Honeypots tripped")
+		// What suggest writes has to be a policy agentgate accepts.
+		path := filepath.Join(e.dir, "suggested.yaml")
+		require.NoError(t, os.WriteFile(path, []byte(fmt.Sprintf("version: 1\nupstreams:\n  - name: demo\n    stdio: [%q]\n%s", e.echoServer, suggested)), 0o600))
+		require.Contains(t, e.run(t, "policy", "validate", path), "is valid")
 	})
 
 	t.Run("check evaluates a call without connecting to anything", func(t *testing.T) {

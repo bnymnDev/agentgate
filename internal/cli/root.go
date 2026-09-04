@@ -46,10 +46,15 @@ untouched.`,
 		newCheckCmd(g),
 		newSessionsCmd(g),
 		newShowCmd(g),
+		newTailCmd(g),
+		newStatsCmd(g),
 		newReplayCmd(g),
 		newDiffCmd(g),
 		newUICmd(g),
 		newPolicyCmd(g),
+		newFreezeCmd(g),
+		newUnfreezeCmd(g),
+		newStatusCmd(g),
 	)
 	return root
 }
