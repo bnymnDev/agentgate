@@ -182,7 +182,7 @@ func (w *lineWriter) write(c *audit.Call) {
 		detail = c.Error
 	}
 	if c.Shadow {
-		detail = "would have " + string(c.Decision) + ": " + c.Reason
+		detail = "would have " + pastTense(c.Decision) + ": " + c.Reason
 	}
 	if detail != "" {
 		detail = w.dim(truncate(detail, 70))
@@ -193,4 +193,15 @@ func (w *lineWriter) write(c *audit.Call) {
 		line += "\n           " + w.dim(truncate(string(c.Args), 160))
 	}
 	fmt.Fprintln(w.out, strings.TrimRight(line, " "))
+}
+
+func pastTense(a policy.Action) string {
+	switch a {
+	case policy.ActionDeny:
+		return "denied"
+	case policy.ActionAsk:
+		return "asked"
+	default:
+		return "allowed"
+	}
 }

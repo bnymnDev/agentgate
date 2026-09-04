@@ -36,6 +36,10 @@ type execArgs struct {
 	Command string `json:"command" jsonschema:"the shell command to run"`
 }
 
+type queryArgs struct {
+	SQL string `json:"sql" jsonschema:"the SQL to run"`
+}
+
 type slowArgs struct {
 	MS int `json:"ms" jsonschema:"how long to take, in milliseconds"`
 }
@@ -86,6 +90,11 @@ func New() *mcp.Server {
 	mcp.AddTool(s, &mcp.Tool{Name: "exec", Description: "Pretend to run a shell command"},
 		func(_ context.Context, _ *mcp.CallToolRequest, in execArgs) (*mcp.CallToolResult, any, error) {
 			return text("would run: " + in.Command), nil, nil
+		})
+
+	mcp.AddTool(s, &mcp.Tool{Name: "query", Description: "Pretend to run a SQL query"},
+		func(_ context.Context, _ *mcp.CallToolRequest, in queryArgs) (*mcp.CallToolResult, any, error) {
+			return text("would run: " + in.SQL), nil, nil
 		})
 
 	mcp.AddTool(s, &mcp.Tool{Name: "slow", Description: "Take a while to answer"},
