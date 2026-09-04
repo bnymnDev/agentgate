@@ -46,6 +46,7 @@ func setup(t *testing.T, configYAML string) *harness {
 	p, err := New(Options{
 		Config:              cfg,
 		Store:               store,
+		Redactor:            audit.NewRedactor(cfg.Audit.Redactors()),
 		Logger:              slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
 		DownstreamTransport: "test",
 	})

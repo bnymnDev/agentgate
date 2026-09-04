@@ -19,6 +19,7 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
@@ -30,7 +31,9 @@ var Version = "dev"
 type Proxy struct {
 	log      *slog.Logger
 	store    *audit.Store
+	redact   *audit.Redactor
 	approver Approver
+	notify   *notifier
 
 	// cfg is swapped wholesale on hot reload, so it is read under mu.
 	mu        sync.RWMutex
@@ -38,8 +41,9 @@ type Proxy struct {
 	upstreams []*upstream
 	byName    map[string]*upstream
 
-	server  *mcp.Server
-	catalog catalog
+	server    *mcp.Server
+	catalog   catalog
+	refreshMu sync.Mutex
 
 	sessions sync.Map // *mcp.ServerSession -> *sessionState
 
@@ -52,7 +56,10 @@ type Proxy struct {
 type Options struct {
 	Config *config.Config
 	Store  *audit.Store
-	Logger *slog.Logger
+	// Redactor scrubs arguments and results that leave the process through a
+	// webhook, and results that reach the agent when redact_results is on.
+	Redactor *audit.Redactor
+	Logger   *slog.Logger
 	// Approver decides "ask" calls. When nil, ask falls back to deny.
 	Approver Approver
 	// DownstreamTransport is recorded with the session ("stdio" or "http").
@@ -73,6 +80,55 @@ type sessionState struct {
 	calls    int
 	perTool  map[string]int
 	finished bool
+	// recent holds the times of allowed calls in the trailing minute, for the
+	// rate limit.
+	recent []time.Time
+	// lastSig and streak drive the loop guard: how many times in a row the
+	// identical call (tool plus argument hash) has just been made.
+	lastSig string
+	streak  int
+	// tokens is the estimated token volume pushed through tools so far.
+	tokens int
+}
+
+// observe notes that a call is being evaluated and returns the counters the
+// evaluator needs, as they stood before this call.
+func (st *sessionState) observe(tool, sig string, now time.Time) policy.Counts {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	repeats := 0
+	if sig == st.lastSig {
+		repeats = st.streak
+		st.streak++
+	} else {
+		st.lastSig = sig
+		st.streak = 1
+	}
+	cutoff := now.Add(-time.Minute)
+	keep := st.recent[:0]
+	for _, t := range st.recent {
+		if t.After(cutoff) {
+			keep = append(keep, t)
+		}
+	}
+	st.recent = keep
+	return policy.Counts{
+		Session:    st.calls,
+		Tool:       st.perTool[tool],
+		LastMinute: len(st.recent),
+		Repeats:    repeats,
+		Tokens:     st.tokens,
+	}
+}
+
+// forwarded records that a call went upstream and what it cost.
+func (st *sessionState) forwarded(tool string, tokens int, now time.Time) {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	st.calls++
+	st.perTool[tool]++
+	st.recent = append(st.recent, now)
+	st.tokens += tokens
 }
 
 // hostInfo records who connected. It is called once, before the session is
@@ -93,6 +149,7 @@ func New(opts Options) (*Proxy, error) {
 	p := &Proxy{
 		log:      log,
 		store:    opts.Store,
+		redact:   opts.Redactor,
 		approver: opts.Approver,
 		cfg:      opts.Config,
 		byName:   map[string]*upstream{},
@@ -101,6 +158,7 @@ func New(opts Options) (*Proxy, error) {
 	if p.approver == nil {
 		p.approver = DenyApprover{}
 	}
+	p.notify = newNotifier(p)
 	for i := range opts.Config.Upstreams {
 		u := &upstream{
 			cfg: &opts.Config.Upstreams[i],
@@ -127,6 +185,36 @@ func (p *Proxy) SetPolicy(pol *policy.Policy) {
 	defer p.mu.Unlock()
 	p.cfg.Policy = *pol
 	p.log.Info("policy reloaded", "summary", pol.Summary())
+}
+
+// Frozen reports whether the kill switch is thrown.
+func (p *Proxy) Frozen() bool {
+	return killswitch.Engaged(p.Config().FreezeFile())
+}
+
+// Freeze throws the kill switch: every call, in every session, on every
+// gateway that shares this config, is denied until Unfreeze.
+func (p *Proxy) Freeze(reason, by string) error {
+	st, err := killswitch.Engage(p.Config().FreezeFile(), reason, by)
+	if err != nil {
+		return err
+	}
+	p.log.Error("gateway frozen", "reason", st.Reason, "by", st.By)
+	p.notify.emit(Event{
+		Event:    config.EventFreeze,
+		Decision: policy.Decision{Action: policy.ActionDeny, Reason: st.Reason, RuleID: policy.RuleFrozen},
+		Message:  "🧊 gateway frozen by " + st.By + ": " + st.Reason,
+	})
+	return nil
+}
+
+// Unfreeze lifts the kill switch.
+func (p *Proxy) Unfreeze() error {
+	if err := killswitch.Release(p.Config().FreezeFile()); err != nil {
+		return err
+	}
+	p.log.Warn("gateway unfrozen")
+	return nil
 }
 
 // Connect dials every upstream and builds the merged catalog. Upstreams that
@@ -348,19 +436,4 @@ func (p *Proxy) endSession(ss *mcp.ServerSession) {
 	}
 	p.log.Info("session ended", "session", st.id, "calls", calls,
 		"duration", time.Since(st.startedAt).Round(time.Millisecond).String())
-}
-
-// count records a forwarded call and returns the counters as they were before
-// it, which is what the budget check needs.
-func (st *sessionState) count(tool string) policy.Counts {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	return policy.Counts{Session: st.calls, Tool: st.perTool[tool]}
-}
-
-func (st *sessionState) increment(tool string) {
-	st.mu.Lock()
-	defer st.mu.Unlock()
-	st.calls++
-	st.perTool[tool]++
 }
