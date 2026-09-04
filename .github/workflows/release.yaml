@@ -1,11 +1,25 @@
 name: release
 
+# Two ways to cut a release:
+#   1. push a tag:  git tag -a v0.2.0 -m "..." && git push origin v0.2.0
+#   2. the Actions tab: run this workflow on main and type the version; the
+#      workflow creates the tag itself and releases from it.
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to tag and release, e.g. v0.2.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   goreleaser:
@@ -14,10 +28,30 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
+
+      - name: create the tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "version must look like v1.2.3 or v1.2.3-rc1, got: $VERSION" >&2; exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$VERSION" >/dev/null 2>&1; then
+            echo "tag $VERSION already exists; push a new version or delete the tag first" >&2; exit 1
+          fi
+          git config user.name  "Bünyamin Ulupinar"
+          git config user.email "88560587+bnymnDev@users.noreply.github.com"
+          git tag -a "$VERSION" -m "agentgate $VERSION" -m "Firewall, kill switch and flight recorder for your AI agent's tools."
+          git push origin "refs/tags/$VERSION"
+          echo "tagged $VERSION at $(git rev-parse --short HEAD)"
+
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           check-latest: true
+
       - uses: goreleaser/goreleaser-action@v6
         with:
           version: latest
