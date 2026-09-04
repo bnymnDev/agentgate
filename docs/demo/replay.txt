@@ -1,0 +1,25 @@
+$ agentgate sessions
+SESSION     STARTED              HOST                TRANSPORT  CALLS  DENIED  DURATION
+───────     ───────              ────                ─────────  ─────  ──────  ────────
+01M1Q0T4HF  2026-09-04 20:12:25  coding-agent 1.4.2  http       7      0       3s
+#sleep 1200
+$ agentgate replay 01M1Q0T4HF --dry-run
+replaying session 01M1Q0T4HFYBVKA1YE7VJ7R8W3 (7 calls) — dry run, nothing is sent
+
+#  TOOL            WAS    NOW    CHANGE
+─  ────            ───    ───    ──────
+0  fs__read_file   allow  allow  
+1  fs__write_file  allow  allow  
+2  shell__exec     allow  allow  
+3  db__query       allow  allow  
+4  fs__write_file  allow  deny   allow → deny
+5  shell__exec     allow  deny   allow → deny
+6  db__query       allow  deny   allow → deny
+
+4 allowed, 3 not allowed, 3 decisions changed
+
+changed decisions:
+  fs__write_file                   allow → deny  writes are confined to the repository
+  shell__exec                      allow → deny  destructive shell command
+  db__query                        allow → deny  queries that destroy data are not for agents
+#sleep 4500
