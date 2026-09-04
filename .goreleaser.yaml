@@ -32,7 +32,7 @@ archives:
     files:
       - README.md
       - LICENSE
-      - docs/**/*
+      - docs/*.md
       - src: testdata/policies/default.yaml
         dst: examples/agentgate.yaml
 
@@ -57,26 +57,43 @@ changelog:
       - '^test:'
       - '^chore:'
 
-brews:
+# Homebrew. The cask is committed into this repository, under Casks/, by the
+# release job's own token, so there is no second repository and no extra
+# secret. Users run
+#   brew tap bnymnDev/agentgate https://github.com/bnymnDev/agentgate
+#   brew install --cask agentgate
+homebrew_casks:
   - name: agentgate
     repository:
       owner: bnymnDev
-      name: homebrew-tap
-      token: '{{ envOrDefault "HOMEBREW_TAP_TOKEN" "" }}'
+      name: agentgate
+      branch: main
+    directory: Casks
+    commit_author:
+      name: Bünyamin Ulupinar
+      email: 88560587+bnymnDev@users.noreply.github.com
+    commit_msg_template: "chore(brew): cask for {{ .ProjectName }} {{ .Tag }}"
     homepage: https://github.com/bnymnDev/agentgate
     description: Firewall, kill switch and flight recorder for your AI agent's tools
     license: GPL-3.0-or-later
-    # Without a tap token the formula is only written to dist/, so a release
-    # never fails on the Homebrew step; add the secret to publish it.
-    skip_upload: '{{ if envOrDefault "HOMEBREW_TAP_TOKEN" "" }}auto{{ else }}true{{ end }}'
-    test: |
-      system "#{bin}/agentgate", "--version"
+    binaries: [agentgate]
+    skip_upload: auto
+    hooks:
+      post:
+        # The binaries are not notarized; lift the quarantine flag so macOS
+        # runs what Homebrew just installed.
+        install: |
+          if system_command("/usr/bin/xattr", args: ["-h"]).exit_status == 0
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/agentgate"]
+          end
 
 release:
   footer: |
     ## Install
 
     ```
-    brew install bnymnDev/tap/agentgate
     go install github.com/bnymnDev/agentgate/cmd/agentgate@{{ .Tag }}
+
+    brew tap bnymnDev/agentgate https://github.com/bnymnDev/agentgate
+    brew install --cask agentgate
     ```

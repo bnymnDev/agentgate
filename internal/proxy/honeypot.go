@@ -87,12 +87,12 @@ func (p *Proxy) honeypotHandler(name string) mcp.ToolHandler {
 }
 
 func honeypotMessage(name string, st *sessionState, args json.RawMessage, frozen bool) string {
-	msg := fmt.Sprintf("🪤 honeypot tripped: %s called %s", hostLabel(st), name)
+	msg := fmt.Sprintf("honeypot tripped: %s called %s", hostLabel(st), name)
 	if len(args) > 0 && len(args) <= 400 {
 		msg += " with " + string(args)
 	}
 	if frozen {
-		msg += "\n🧊 The gateway is frozen. Run `agentgate unfreeze` when you have looked."
+		msg += "\nThe gateway is frozen. Run `agentgate unfreeze` when you have looked."
 	}
 	return msg
 }

@@ -25,7 +25,7 @@
   {{if .Frozen}}
   <article class="frozen">
     <div>
-      <strong>🧊 The gateway is frozen.</strong> Every tool call is being denied.
+      <strong>The gateway is frozen.</strong> Every tool call is being denied.
       <small class="muted">{{.FreezeReason}}{{if .FrozenBy}} — by {{.FrozenBy}}{{end}}{{if not .FrozenAt.IsZero}} at {{ts .FrozenAt}}{{end}}</small>
     </div>
     {{if .CanFreeze}}<form method="post" action="/unfreeze"><button type="submit">Unfreeze</button></form>{{end}}
@@ -33,7 +33,7 @@
   {{else if .CanFreeze}}
   <form method="post" action="/freeze" class="freeze-form" onsubmit="return confirm('Deny every tool call from every agent until you unfreeze?')">
     <input type="hidden" name="reason" value="frozen from the web UI">
-    <button type="submit" class="outline contrast freeze-button" title="Deny every tool call, everywhere, until you unfreeze">🧊 Freeze all agents</button>
+    <button type="submit" class="outline contrast freeze-button" title="Deny every tool call, everywhere, until you unfreeze">Freeze all agents</button>
   </form>
   {{end}}
   {{if .Shadow}}<p class="shadow-note"><span class="badge shadow">shadow mode</span> <small class="muted">decisions are recorded, nothing is blocked</small></p>{{end}}

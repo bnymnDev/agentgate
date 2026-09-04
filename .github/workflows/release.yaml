@@ -23,8 +23,6 @@ jobs:
           version: latest
           args: release --clean
         env:
+          # Publishes the release and commits the Homebrew cask into this
+          # repository's Casks/ directory; no other secret is needed.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Optional: a personal access token with contents:write on the tap
-          # repository. Without it the formula is written to dist/ but not
-          # pushed, and the release still succeeds.
-          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
