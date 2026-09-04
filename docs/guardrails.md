@@ -199,6 +199,22 @@ honeypot and freeze events, urgent priority — the one you want to buzz.
 Delivery is asynchronous with a ten-second deadline and never touches the
 request path. Arguments are redacted before they are sent.
 
+## Approvals
+
+An `ask` rule is a guardrail with a human in it. The call waits — up to
+`approval.timeout`, sixty seconds by default — for an answer on agentgate's
+terminal or in the web UI's approvals inbox, and is denied if none comes.
+
+The answer can be "allow once" or "allow for this session". The second is
+what makes `ask` livable on a tool an agent uses fifty times an hour: the
+human is asked the first time, and the same tool in the same session is waved
+through after that, with the audit log noting on every call that it was
+approved earlier. The approval is per session and per tool; a new connection
+starts with a clean slate, and a different tool still asks.
+
+Every `ask` also fires the `ask` webhook event, so the question can reach a
+phone before the timeout does.
+
 ## Seeing what happened
 
 ```sh

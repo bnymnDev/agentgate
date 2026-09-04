@@ -34,7 +34,7 @@ var staticFS embed.FS
 // running behind it.
 type Approvals interface {
 	Pending() []proxy.PendingApproval
-	Resolve(id string, allow bool, who string) bool
+	Resolve(id string, choice proxy.Choice, who string) bool
 }
 
 // Options configure the UI server.

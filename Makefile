@@ -12,7 +12,7 @@ LDFLAGS     := -s -w \
 
 GO ?= go
 
-.PHONY: all build dev test e2e lint fmt vet docs clean install release-snapshot golden coverage
+.PHONY: all build dev test e2e lint fmt vet docs demo clean install release-snapshot golden coverage
 
 all: build
 
@@ -76,6 +76,10 @@ vet:
 ## docs: regenerate the generated tables in README.md and docs/
 docs:
 	$(GO) run ./internal/gendocs
+
+## demo: render docs/demo/transcript.txt (real agentgate output) into docs/demo.gif
+demo:
+	$(GO) run ./internal/demogif
 
 ## release-snapshot: build release artifacts locally without publishing
 release-snapshot:

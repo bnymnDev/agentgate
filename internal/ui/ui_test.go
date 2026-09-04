@@ -16,6 +16,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/proxy"
 )
 
 func newTestServer(t *testing.T) (http.Handler, *audit.Session) {
@@ -218,4 +219,58 @@ func TestReadOnlyInstanceHidesFreezeButtons(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/freeze", nil))
 	require.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestApprovalButtons drives the three answers through the real inbox: the
+// verb in the URL is what decides, and the waiting call sees the verdict.
+func TestApprovalButtons(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Parse([]byte("version: 1\nupstreams:\n  - name: fs\n    stdio: [\"true\"]\npolicy:\n  default: allow\n"))
+	require.NoError(t, err)
+	cfg.Audit.Path = filepath.Join(t.TempDir(), "audit.db")
+	store, err := audit.Open(ctx, audit.Options{Path: cfg.Audit.Path})
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close(ctx) })
+
+	inbox := proxy.NewInbox()
+	srv, err := New(Options{Store: store, Config: func() *config.Config { return cfg }, Approvals: inbox})
+	require.NoError(t, err)
+	h := srv.Handler()
+
+	for _, tc := range []struct {
+		verb        string
+		wantAllow   bool
+		wantSession bool
+	}{
+		{"allow", true, false},
+		{"allow-session", true, true},
+		{"deny", false, false},
+	} {
+		t.Run(tc.verb, func(t *testing.T) {
+			done := make(chan proxy.Verdict, 1)
+			go func() {
+				v, _ := inbox.Approve(ctx, proxy.ApprovalRequest{Tool: "fs__write_file", Decision: policy.Decision{RuleID: "ask-first"}})
+				done <- v
+			}()
+			require.Eventually(t, func() bool { return len(inbox.Pending()) == 1 }, 3*time.Second, 10*time.Millisecond)
+
+			page := get(t, h, "/approvals").Body.String()
+			require.Contains(t, page, "Allow for this session")
+			require.Contains(t, page, "fs__write_file")
+
+			id := inbox.Pending()[0].ID
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/approvals/"+id+"/"+tc.verb, nil))
+			require.Equal(t, http.StatusOK, rec.Code)
+
+			v := <-done
+			require.Equal(t, tc.wantAllow, v.Action == policy.ActionAllow)
+			require.Equal(t, tc.wantSession, v.Session)
+			require.Contains(t, v.Reason, "the web UI")
+		})
+	}
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/approvals/x/maybe", nil))
+	require.Equal(t, http.StatusBadRequest, rec.Code, "an unknown verb is rejected, not treated as deny")
 }

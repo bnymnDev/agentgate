@@ -23,6 +23,7 @@
   <footer>
     <div role="group">
       <button hx-post="/approvals/{{.ID}}/allow" hx-target="#approval-list">Allow once</button>
+      <button hx-post="/approvals/{{.ID}}/allow-session" hx-target="#approval-list" class="contrast" title="Allow this tool for the rest of this session; it will not be asked again">Allow for this session</button>
       <button hx-post="/approvals/{{.ID}}/deny" hx-target="#approval-list" class="secondary">Deny</button>
     </div>
   </footer>

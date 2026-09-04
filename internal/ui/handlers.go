@@ -292,12 +292,14 @@ func (s *Server) handleApprovalDecide(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no approvals queue", http.StatusNotFound)
 		return
 	}
-	verb := r.PathValue("verb")
-	if verb != "allow" && verb != "deny" {
-		http.Error(w, "expected allow or deny", http.StatusBadRequest)
+	choice := proxy.Choice(r.PathValue("verb"))
+	switch choice {
+	case proxy.ChoiceAllow, proxy.ChoiceAllowSession, proxy.ChoiceDeny:
+	default:
+		http.Error(w, "expected allow, allow-session or deny", http.StatusBadRequest)
 		return
 	}
-	if !s.opts.Approvals.Resolve(r.PathValue("id"), verb == "allow", "the web UI") {
+	if !s.opts.Approvals.Resolve(r.PathValue("id"), choice, "the web UI") {
 		s.log.Info("approval no longer pending", "id", r.PathValue("id"))
 	}
 	s.renderPartial(w, "approvals", "approval-rows", s.approvalsData())

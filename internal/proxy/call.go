@@ -228,9 +228,17 @@ func (p *Proxy) resolveAsk(ctx context.Context, st *sessionState, b ToolBinding,
 		askCtx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
+	if st.approvedForSession(b.Exposed) {
+		p.log.Info("approval carried over from earlier in the session", "session", st.id, "tool", b.Exposed)
+		return policy.Decision{
+			Action: policy.ActionAllow,
+			Reason: "approved earlier for the rest of this session",
+			RuleID: decision.RuleID,
+		}
+	}
 	p.log.Info("approval required",
 		"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
-	out, err := p.approver.Approve(askCtx, ApprovalRequest{
+	verdict, err := p.approver.Approve(askCtx, ApprovalRequest{
 		SessionID: st.id,
 		Upstream:  b.Upstream,
 		Tool:      b.Exposed,
@@ -246,6 +254,10 @@ func (p *Proxy) resolveAsk(ctx context.Context, st *sessionState, b ToolBinding,
 			RuleID: decision.RuleID,
 		}
 	}
+	if verdict.Session && verdict.Action == policy.ActionAllow {
+		st.rememberApproval(b.Exposed)
+	}
+	out := verdict.Decision
 	out.RuleID = decision.RuleID
 	return out
 }

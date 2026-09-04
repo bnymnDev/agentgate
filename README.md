@@ -20,6 +20,12 @@ Every tool call is checked against a policy, recorded, replayable — and stoppa
 
 No changes to the host. No changes to the servers. No cgo, no runtime, no cloud.
 
+![agentgate tail: an agent reads a file, runs the tests, gets denied on rm -rf, trips a honeypot and freezes the gateway; then agentgate status and agentgate unfreeze](docs/demo.gif)
+
+*Real output. The agent read a file, ran the tests, was denied `rm -rf`, then
+called a tool that does not exist — and every agent on the machine was frozen
+until a human looked.*
+
 ---
 
 ## Seven things it does that nothing else does
@@ -33,6 +39,7 @@ No changes to the host. No changes to the servers. No cgo, no runtime, no cloud.
 | **Time-travel policy testing** | `agentgate replay <session> --dry-run` re-runs yesterday's real session against today's policy and shows exactly which decisions change. |
 | **Secret redaction, both ways** | Secrets are scrubbed before they reach the audit log — and, if you say so, before they reach the model. Your agent reads `.env`, the model gets `[REDACTED]`. |
 | **Slack, Discord, ntfy, anything** | A denial, an approval request, a honeypot trip: get it on your phone. A webhook URL is all it takes. |
+| **Approvals that remember** | An `ask` rule parks the call until a human answers — in the terminal or the web UI — and "allow for this session" means the same question is not asked again a minute later. |
 
 Plus the boring parts done properly: a YAML policy language with globs, regexes and JSONPath-lite argument matching; budgets per session, per tool, per minute and per token; rules on what the *server itself* says about a tool (`annotations.destructive: true`); rules on the time of day (no deploys on Friday afternoon); approvals from the terminal or a web UI; a local SQLite audit log with replay, diff, stats and a live `tail`; and a `policy suggest` that writes a deny-by-default policy from what your agent actually did.
 
@@ -271,9 +278,9 @@ make lint
 
 ## Status
 
-v0.2. Everything in this README is implemented and covered by tests, including the end-to-end suite that drives the real binary. Not in it, on purpose: asking a model whether a call is safe (rules are deterministic so that `replay` can be trusted), central or multi-user management, governing prompts and resources (they pass through untouched), and authentication in front of the web UI (it refuses to bind to anything but localhost unless you insist).
+v0.3. Everything in this README is implemented and covered by tests, including the end-to-end suite that drives the real binary. Not in it, on purpose: asking a model whether a call is safe (rules are deterministic so that `replay` can be trusted), central or multi-user management, governing prompts and resources (they pass through untouched), and authentication in front of the web UI (it refuses to bind to anything but localhost unless you insist).
 
-Roadmap: a demo GIF for this page, per-session "allow for the rest of this session" approvals, and a `--record-only` mode.
+Roadmap: OpenTelemetry export of the audit log, a `policy lint` that flags rules no recorded call has ever matched, and approval requests answered straight from the Slack message.
 
 ## License
 

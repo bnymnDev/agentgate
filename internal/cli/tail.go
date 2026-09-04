@@ -23,6 +23,7 @@ func newTailCmd(g *globals) *cobra.Command {
 		noFollow bool
 		asJSON   bool
 		showArgs bool
+		colour   string
 	)
 	cmd := &cobra.Command{
 		Use:   "tail",
@@ -45,8 +46,18 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 			defer closeStore(store)
 
 			out := cmd.OutOrStdout()
-			colour := !asJSON && isatty.IsTerminal(os.Stdout.Fd()) && os.Getenv("NO_COLOR") == ""
-			w := &lineWriter{out: out, colour: colour, args: showArgs, json: asJSON}
+			var useColour bool
+			switch colour {
+			case "always":
+				useColour = true
+			case "never":
+				useColour = false
+			case "auto":
+				useColour = isatty.IsTerminal(os.Stdout.Fd()) && os.Getenv("NO_COLOR") == ""
+			default:
+				return fmt.Errorf("--color: want auto, always or never, got %q", colour)
+			}
+			w := &lineWriter{out: out, colour: useColour && !asJSON, args: showArgs, json: asJSON}
 
 			sessionID := ""
 			if session != "" {
@@ -116,6 +127,7 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 	cmd.Flags().BoolVar(&noFollow, "no-follow", false, "print the recent calls and exit")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "one JSON object per line")
 	cmd.Flags().BoolVar(&showArgs, "args", false, "show the arguments on every line")
+	cmd.Flags().StringVar(&colour, "color", "auto", "colour the output: auto, always or never")
 	return cmd
 }
 

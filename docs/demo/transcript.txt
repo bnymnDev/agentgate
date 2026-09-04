@@ -1,0 +1,18 @@
+$ agentgate tail
+[2m── following ./.agentgate/audit.db (ctrl-c to stop) ──[0m
+[2m19:43:32[0m  [32mallow  [0m [36mdemo__read_file[0m              0ms  [2mread-only tools[0m
+[2m19:43:33[0m  [32mallow  [0m [36mdemo__echo[0m                   0ms  [2mread-only tools[0m
+[2m19:43:34[0m  [32mallow  [0m [36mdemo__exec[0m                   0ms  [2mdefault allow[0m
+[2m19:43:35[0m  [31;1mDENY   [0m [36mdemo__exec[0m                   0ms  [2mdestructive shell command[0m
+[2m19:43:36[0m  [31;1mTRAP   [0m [36mdemo__drop_all_tables[0m        0ms  [2mhoneypot: demo__drop_all_tables does not exist. Calling it means the …[0m
+[31;1mthe gateway is now FROZEN[0m
+[2m19:43:37[0m  [31;1mDENY   [0m [36mdemo__echo[0m                   0ms  [2magentgate is frozen; run `agentgate unfreeze` to let calls through ag…[0m
+#sleep 1500
+^C
+$ agentgate status
+state      FROZEN since 2026-09-04T19:43:36Z by honeypot: honeypot demo__drop_all_tables tripped by coding-agent 1.4.2 (session 01M1PZ57MJ)
+policy     default allow, 4 rules (1 allow, 1 deny, 2 ask)
+#sleep 1200
+$ agentgate unfreeze
+unfrozen (was frozen since 2026-09-04T19:43:36Z: honeypot demo__drop_all_tables tripped by coding-agent 1.4.2 (session 01M1PZ57MJ))
+#sleep 3000
