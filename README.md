@@ -44,11 +44,11 @@ Plus the boring parts done properly: a YAML policy language with globs, regexes 
 go install github.com/bnymnDev/agentgate/cmd/agentgate@latest
 ```
 
-or with Homebrew, on macOS and Linux:
+or with Homebrew:
 
 ```sh
 brew tap bnymnDev/agentgate https://github.com/bnymnDev/agentgate
-brew install bnymnDev/agentgate/agentgate
+brew install --cask agentgate
 ```
 
 Prebuilt binaries for linux, macOS and Windows (amd64 and arm64) are on the

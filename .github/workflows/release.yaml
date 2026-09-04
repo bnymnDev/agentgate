@@ -23,6 +23,6 @@ jobs:
           version: latest
           args: release --clean
         env:
-          # Publishes the release and commits the Homebrew formula into this
-          # repository's Formula/ directory; no other secret is needed.
+          # Publishes the release and commits the Homebrew cask into this
+          # repository's Casks/ directory; no other secret is needed.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
