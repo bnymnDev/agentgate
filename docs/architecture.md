@@ -8,7 +8,7 @@
    │                 │        │  mcp.Server           │        │  mcp.Client  ×N  │
    │  your editor    │ stdio  │  ┌─────────────────┐  │ stdio  │  ┌────────────┐  │
    │  your agent     │◀──────▶│  │ receiving       │  │◀──────▶│  │ filesystem │  │
-   │  …any MCP host  │  http  │  │ middleware      │  │  http  │  │ shopware   │  │
+   │  …any MCP host  │  http  │  │ middleware      │  │  http  │  │ github     │  │
    │                 │        │  └────────┬────────┘  │        │  │ your own   │  │
    └─────────────────┘        │           │           │        │  └────────────┘  │
                               │   tools/call only     │        └──────────────────┘
@@ -37,7 +37,8 @@ so anything the SDK learns, agentgate learns.
 | `internal/config` | Load, expand and validate `agentgate.yaml`. Every problem reported at once. |
 | `internal/policy` | The rule model and the evaluator. Pure; no imports outside the standard library and YAML. |
 | `internal/audit` | SQLite store, migrations, redaction, canonical hashing, retention. |
-| `internal/proxy` | The MCP passthrough, the interception point, approvals. |
+| `internal/proxy` | The MCP passthrough, the interception point, approvals, honeypots, webhooks. |
+| `internal/killswitch` | The freeze marker: engage, release, status. A file, on purpose. |
 | `internal/replay` | Re-evaluate and re-send recorded sessions; align and compare two of them. |
 | `internal/ui` | Server-rendered web UI. Templates and assets embedded. |
 | `internal/cli` | The cobra command tree. |
@@ -54,17 +55,31 @@ with golden files.
    handler already knows which upstream owns it, so there is no name parsing on
    the hot path.
 3. The arguments are decoded into a `map[string]any` with `json.Number`, so a
-   `gt` comparison sees the number the host actually sent.
+   `gt` comparison sees the number the host actually sent. The session's
+   counters — calls so far, calls in the last minute, the identical-call streak,
+   tokens so far — are snapshotted, the kill-switch marker is checked, and the
+   tool's annotations and the current time are attached. Everything the
+   evaluator needs is on the `Call`; the evaluator itself touches nothing else.
 4. `policy.Evaluate` returns a `Decision` — an action, a reason, and the id of
-   the rule that decided. Never a bare boolean.
-5. **deny** → agentgate answers with `CallToolResult{IsError: true}` carrying
+   the rule that decided. Never a bare boolean. The kill switch, the loop guard
+   and the budgets decide first, with fixed rule ids; then the rules; then the
+   default.
+5. In **shadow mode** a deny or ask is recorded as such, flagged, and turned into
+   an allow. Otherwise:
+   **deny** → agentgate answers with `CallToolResult{IsError: true}` carrying
    `agentgate denied: <reason> (rule <id>)`. Not a transport error: the agent has
    to be able to read why and adapt.
    **ask** → the call parks until a human answers or the timeout expires.
    **allow** → the call is forwarded with the same arguments, the same `_meta`
    and the same progress token, under a deadline.
-6. The result comes back untouched. A record is queued for the audit store and
-   the call returns.
+6. The result comes back untouched — unless `redact_results` is on, in which
+   case its text is scrubbed before the agent reads it. A record is queued for
+   the audit store, the session's counters are advanced, any webhook that wants
+   to know is told, and the call returns.
+
+Honeypot tools take a shorter path: their handler never consults the policy.
+It denies, records with the rule id `honeypot`, notifies, and if configured
+engages the kill switch — see [guardrails.md](guardrails.md).
 
 ## What is intercepted, and what is not
 
@@ -161,7 +176,11 @@ exit.
 
 - One goroutine per downstream session, waiting for it to end.
 - One goroutine draining the audit queue.
-- One goroutine per catalogue refresh triggered by an upstream's `list_changed`.
+- One goroutine per catalogue refresh triggered by an upstream's `list_changed`;
+  refreshes are serialised so two upstreams changing at once cannot interleave.
+- One goroutine per webhook delivery, with a ten-second deadline.
+- One goroutine per terminal, reading approval answers, so a question that
+  timed out cannot swallow the answer to the next one.
 
 All of them are tracked by a `WaitGroup` and end when `Proxy.Close` runs.
 `agentgate run` ties the MCP server, the web UI and signal handling together in

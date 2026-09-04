@@ -160,3 +160,82 @@ in `internal/cli` instead, with `main` reduced to a dozen lines, so that
 `internal/gendocs` can build the same command tree the binary runs and generate
 the README's command and flag tables from it. `make docs` regenerates them and
 CI fails if they drift.
+
+## The kill switch is a file
+
+**A marker file next to the audit database, checked with one `stat()` per call.**
+
+The alternatives were a Unix socket or a signal handler. Both need a running
+proxy to talk to, both need to find it, and neither survives a restart. A file
+works from a shell, a cron job, a script, the web UI and a honeypot alike; it
+freezes every gateway that shares the config at once; and a gateway that comes
+up frozen stays frozen, which is the safe direction.
+
+Failing closed matters here: a marker that exists but cannot be parsed still
+counts as frozen.
+
+## Honeypots deny outside the rule engine
+
+**A honeypot call never reaches `Evaluate`.** It is handled by its own tool
+handler that denies, records with the fixed rule id `honeypot`, notifies and
+optionally freezes.
+
+Putting it through the evaluator would let a rule allow it, and there is no
+world in which a call to a tool that does not exist should be allowed. It also
+keeps the policy evaluator ignorant of the catalogue, which keeps it pure.
+
+## The loop guard counts denied calls too
+
+**The streak is every evaluated call with the same tool and arguments, whatever
+the decision.**
+
+The case that decides it: a rule denies a call, and the agent retries it
+unchanged, ten times. Counting only allowed calls would never trip the guard
+here. Counting every call trips it, and the agent sees a different, escalating
+message — "you have made this identical call ten times" — which is more useful
+to a model than the tenth copy of the same rule reason.
+
+## Shadow mode records the verdict, not the outcome
+
+**In shadow mode the audit row carries the decision the policy reached
+(`deny`, `ask`) with `shadow = 1`, and the call is forwarded.**
+
+The other way round — recording `allow` with a note — would make `stats` and
+`replay` blind to what the policy was doing, which is the only reason to run
+shadow mode. The `shadow` column is what tells `Blocked()` and the UI that the
+verdict was not applied.
+
+The migration that adds the column (`0002_shadow`) is the first schema change
+after the initial one, and there is a test that opens a database created by the
+first release and upgrades it, so that the path stays exercised.
+
+## Result redaction is opt-in
+
+**`redact_results` is off unless the policy turns it on.**
+
+The transparency promise — bytes in, bytes out when no rule matches — is worth
+more than a default that quietly rewrites results. Redaction into the audit log
+has no such tension: nobody but the operator reads the log. Redaction into the
+model's view of the world is a policy decision, so it lives in `policy:` and it
+is documented as the one place agentgate changes a result on purpose.
+
+## Annotations apply the MCP defaults
+
+**A tool with an annotations object but no `destructiveHint` is destructive.**
+
+The MCP specification says the default for `destructiveHint` is `true` and for
+`openWorldHint` is `true`. A rule that asks before anything destructive should
+therefore ask before a tool whose server bothered to annotate it but did not
+say it was safe. A tool with no annotations at all is a different case: the
+server said nothing, every `annotations.*` path is missing, and no such rule
+matches. Servers lie, so annotations widen an `ask`; they should not be used to
+narrow a `deny`.
+
+## Time conditions use local time
+
+**`time.hour` and `time.weekday` are read in the gateway's local time zone.**
+
+"No deploys on Friday afternoon" is a statement about the operator's Friday.
+Replay evaluates the recorded timestamp, so a replayed decision matches the
+live one; the golden tests pin the zone to UTC so that they do not depend on
+where they run.
