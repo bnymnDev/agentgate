@@ -52,7 +52,14 @@ type Call struct {
 	ResultTruncated bool `json:"result_truncated,omitempty"`
 	// Error carries a transport level failure (a timeout, a dead upstream).
 	Error string `json:"error,omitempty"`
+	// Shadow reports that the decision was recorded but not applied: the
+	// policy was in shadow mode and the call was forwarded anyway.
+	Shadow bool `json:"shadow,omitempty"`
 }
+
+// Blocked reports whether the call was actually stopped: a deny that was
+// applied, as opposed to one that shadow mode only wrote down.
+func (c *Call) Blocked() bool { return c.Decision != policy.ActionAllow && !c.Shadow }
 
 // StartSession records the beginning of a downstream connection. It is
 // synchronous: everything else in the session references this row, so it has to
@@ -126,11 +133,11 @@ func (s *Store) insertCall(ctx context.Context, c *Call) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO calls (id, session_id, ts, upstream, tool, args_json, args_hash,
 		                    decision, rule_id, reason, result_json, result_hash,
-		                    is_error, duration_ms, tokens_est, result_truncated, error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                    is_error, duration_ms, tokens_est, result_truncated, error, shadow)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.SessionID, c.TS.UnixMilli(), c.Upstream, c.Tool, string(c.Args), c.ArgsHash,
 		string(c.Decision), c.RuleID, c.Reason, string(c.Result), c.ResultHash,
-		boolInt(c.IsError), c.DurationMS, c.TokensEst, boolInt(c.ResultTruncated), c.Error)
+		boolInt(c.IsError), c.DurationMS, c.TokensEst, boolInt(c.ResultTruncated), c.Error, boolInt(c.Shadow))
 	return err
 }
 

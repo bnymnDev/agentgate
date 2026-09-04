@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
@@ -157,4 +159,63 @@ func TestArgumentsAreEscaped(t *testing.T) {
 	// encoding/json turns < and > into \u003c / \u003e on its way out, and
 	// html/template escapes whatever is left. Either way nothing executes.
 	require.Contains(t, body, `\u003cscript\u003e`)
+}
+
+// TestFreezeFromTheBrowser: the kill switch is a form post; the banner shows
+// up on every page while it is on; unfreeze clears it.
+func TestFreezeFromTheBrowser(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Parse([]byte("version: 1\nupstreams:\n  - name: fs\n    stdio: [\"true\"]\npolicy:\n  default: allow\n"))
+	require.NoError(t, err)
+	cfg.Audit.Path = filepath.Join(t.TempDir(), "audit.db")
+	store, err := audit.Open(ctx, audit.Options{Path: cfg.Audit.Path})
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close(ctx) })
+
+	var frozenReason string
+	srv, err := New(Options{
+		Store:  store,
+		Config: func() *config.Config { return cfg },
+		Freeze: func(reason, by string) error {
+			frozenReason = reason + " / " + by
+			_, err := killswitch.Engage(cfg.FreezeFile(), reason, by)
+			return err
+		},
+		Unfreeze: func() error { return killswitch.Release(cfg.FreezeFile()) },
+	})
+	require.NoError(t, err)
+	h := srv.Handler()
+
+	body := get(t, h, "/").Body.String()
+	require.Contains(t, body, "Freeze all agents")
+	require.NotContains(t, body, "The gateway is frozen")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/freeze", strings.NewReader("reason=demo+time"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Referer", "http://localhost:7777/policy")
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.Equal(t, "/policy", rec.Header().Get("Location"))
+	require.Equal(t, "demo time / the web UI", frozenReason)
+
+	body = get(t, h, "/").Body.String()
+	require.Contains(t, body, "The gateway is frozen")
+	require.Contains(t, body, "demo time")
+	require.Contains(t, body, "Unfreeze")
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/unfreeze", nil))
+	require.Equal(t, http.StatusSeeOther, rec.Code)
+	require.NotContains(t, get(t, h, "/").Body.String(), "The gateway is frozen")
+}
+
+// TestReadOnlyInstanceHidesFreezeButtons: "agentgate ui" without the hooks
+// must not render controls that would 404.
+func TestReadOnlyInstanceHidesFreezeButtons(t *testing.T) {
+	h, _ := newTestServer(t)
+	require.NotContains(t, get(t, h, "/").Body.String(), "Freeze all agents")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/freeze", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code)
 }
