@@ -21,6 +21,7 @@ import (
 	"image/color"
 	"image/draw"
 	"image/gif"
+	"image/png"
 	"log"
 	"os"
 	"strconv"
@@ -78,6 +79,7 @@ type entry struct {
 func main() {
 	in := flag.String("in", "docs/demo/story.txt", "transcript to render")
 	out := flag.String("out", "docs/demo/story.gif", "where to write the GIF")
+	card := flag.Bool("card", false, "render a 1280x640 social preview PNG from the transcript instead of a GIF")
 	flag.Parse()
 
 	entries, err := parse(*in)
@@ -91,6 +93,13 @@ func main() {
 		log.Fatal(err)
 	}
 	r := newRenderer(face)
+	if *card {
+		if err := r.writeCard(entries, *out); err != nil {
+			log.Fatal(err)
+		}
+		fmt.Printf("wrote %s\n", *out)
+		return
+	}
 	anim := r.animate(entries)
 	f, err := os.Create(*out)
 	if err != nil {
@@ -413,4 +422,74 @@ func changed(a, b *image.Paletted) image.Rectangle {
 		return image.Rectangle{}
 	}
 	return image.Rect(minX, minY, maxX, maxY)
+}
+
+// writeCard renders the social preview: the wordmark, the tagline, and the
+// last few output lines of the transcript in a terminal window below — the
+// image a link to the repository unfurls into on X, LinkedIn or Slack.
+func (r *renderer) writeCard(entries []entry, path string) error {
+	const w, h = 1280, 640
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(img, img.Bounds(), &image.Uniform{cBg}, image.Point{}, draw.Src)
+
+	big, err := opentype.NewFace(must(opentype.Parse(gomono.TTF)), &opentype.FaceOptions{Size: 84, DPI: 72, Hinting: font.HintingFull})
+	if err != nil {
+		return err
+	}
+	mid, err := opentype.NewFace(must(opentype.Parse(gomono.TTF)), &opentype.FaceOptions{Size: 26, DPI: 72, Hinting: font.HintingFull})
+	if err != nil {
+		return err
+	}
+	// Wordmark, "gate" in the accent colour.
+	d := &font.Drawer{Dst: img, Face: big}
+	agent, gate := "agent", "gate"
+	total := d.MeasureString(agent + gate).Ceil()
+	x := (w - total) / 2
+	d.Src, d.Dot = &image.Uniform{cFg}, fixed.P(x, 150)
+	d.DrawString(agent)
+	d.Src = &image.Uniform{cCyan}
+	d.DrawString(gate)
+	// Tagline.
+	d = &font.Drawer{Dst: img, Face: mid, Src: &image.Uniform{cDim}}
+	tag := "firewall, kill switch and flight recorder for your AI agent's tools"
+	d.Dot = fixed.P((w-d.MeasureString(tag).Ceil())/2, 205)
+	d.DrawString(tag)
+
+	// A terminal window with the most telling lines of the transcript.
+	var lines [][]span
+	for _, e := range entries {
+		if e.kind == "out" && len(e.spans) > 0 {
+			lines = append(lines, e.spans)
+		}
+	}
+	const show = 7
+	if len(lines) > show {
+		lines = lines[1 : show+1]
+	}
+	winTop, winLeft, winRight := 260, 80, w-80
+	winBottom := winTop + titleBar + padY*2 + len(lines)*lineHeight
+	draw.Draw(img, image.Rect(winLeft, winTop, winRight, winBottom), &image.Uniform{cChrome}, image.Point{}, draw.Src)
+	draw.Draw(img, image.Rect(winLeft, winTop+titleBar, winRight, winBottom), &image.Uniform{color.RGBA{0x0c, 0x0e, 0x12, 0xff}}, image.Point{}, draw.Src)
+	for i, c := range []color.RGBA{cDot1, cDot2, cDot3} {
+		circle(img, winLeft+20+i*22, winTop+titleBar/2, 6, c)
+	}
+	cols := (winRight - winLeft - 2*padX) / r.cellW
+	for i, line := range lines {
+		xx := winLeft + padX
+		y := winTop + titleBar + padY + i*lineHeight + fontSize
+		for _, sp := range wrap(line, cols)[0] {
+			dd := &font.Drawer{Dst: img, Src: &image.Uniform{sp.col}, Face: r.face, Dot: fixed.P(xx, y)}
+			dd.DrawString(sp.text)
+			xx += utf8.RuneCountInString(sp.text) * r.cellW
+		}
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	if err := png.Encode(f, img); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
