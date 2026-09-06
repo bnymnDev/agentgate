@@ -79,7 +79,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-      - uses: golangci/golangci-lint-action@v8
+      - uses: golangci/golangci-lint-action@v9
         with:
           # Pinned so that a linter release cannot turn main red on its own;
           # bump it on purpose, together with any findings it brings.
