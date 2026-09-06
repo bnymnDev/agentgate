@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/bnymnDev/agentgate/security/advisories/new
+    about: A policy bypass, a leaked secret or a way to act on the gateway remotely. Please report privately.
+  - name: Documentation
+    url: https://github.com/bnymnDev/agentgate/tree/main/docs
+    about: The policy language, every configuration field, every flag, and the reasoning behind the design.

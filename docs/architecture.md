@@ -114,7 +114,7 @@ read the first server's resources, so instead:
   the first upstream that supports it.
 
 Name collisions between upstreams are resolved for tools by prefixing. For
-resources and prompts, which v0.1 does not prefix, the first upstream to claim a
+resources and prompts, which v0.3 does not prefix, the first upstream to claim a
 URI or a name keeps it, and the clash is logged.
 
 ## Transparency
@@ -187,7 +187,7 @@ All of them are tracked by a `WaitGroup` and end when `Proxy.Close` runs.
 a small run group: when one stops, the others are told to, and the process
 returns only once everything is down.
 
-## Known limits in v0.1
+## Known limits
 
 - Roots are mirrored from the most recent downstream session. agentgate is meant
   to sit in front of a single host; with several connected at once the last one

@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a new rule condition, command, guardrail or integration
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, have a look at the Status section of the README. Some things are
+        left out on purpose: asking a model whether a call is safe, central or multi-user
+        management, governing prompts and resources, and authentication in front of the web UI.
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What did an agent do, or what could it do, that you want to prevent, see or control?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: |
+        How would it look in `agentgate.yaml`, on the command line or in the audit log?
+        A sketch of the YAML or the CLI invocation is more useful than prose.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Can existing rules, budgets, honeypots or webhooks get you most of the way?
+  - type: checkboxes
+    id: principles
+    attributes:
+      label: Design principles
+      options:
+        - label: The change keeps policy evaluation deterministic, so that `replay` still reproduces every decision.
+        - label: The change does not require a daemon, a cloud service or an account.

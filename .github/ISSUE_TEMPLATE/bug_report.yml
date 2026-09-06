@@ -1,0 +1,64 @@
+name: Bug report
+description: Something does not behave the way the documentation says it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. If the bug lets an agent bypass a policy, reach a secret or
+        act on the gateway from another machine, please do not file it here: use the private
+        reporting described in SECURITY.md instead.
+  - type: input
+    id: version
+    attributes:
+      label: agentgate version
+      description: Output of `agentgate --version`, or the tag or commit you built from.
+      placeholder: v0.3.0
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Platform
+      description: Operating system and architecture, and how you installed agentgate.
+      placeholder: macOS 15 arm64, Homebrew cask
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: MCP host and upstream server
+      description: Which host launches agentgate and which server sits behind it.
+      placeholder: Claude Code, @modelcontextprotocol/server-filesystem
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What did agentgate do, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: |
+        The shortest path to the problem. An `agentgate check` invocation, a `replay --dry-run`
+        or a session id from `agentgate sessions` is often enough.
+      placeholder: |
+        1. agentgate run --stdio --config agentgate.yaml
+        2. the agent calls fs__write_file with path /tmp/x
+        3. the call is allowed although rule stay-in-the-repo should deny it
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Configuration
+      description: The relevant part of `agentgate.yaml`, with secrets and webhook URLs removed.
+      render: yaml
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and output
+      description: Output of `agentgate tail`, `agentgate show <session>` or the proxy with `--log-level debug`.
+      render: text

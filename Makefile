@@ -1,4 +1,4 @@
-# agentgate — see CONTRIBUTING notes in docs/architecture.md
+# agentgate — see CONTRIBUTING.md for the development workflow
 BINARY      := agentgate
 BUILD_DIR   := bin
 ECHO_SERVER := $(BUILD_DIR)/echo-server

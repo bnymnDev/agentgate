@@ -9,6 +9,7 @@
   <a href="https://github.com/bnymnDev/agentgate/actions/workflows/ci.yaml"><img src="https://github.com/bnymnDev/agentgate/actions/workflows/ci.yaml/badge.svg" alt="ci"></a>
   <a href="https://github.com/bnymnDev/agentgate/releases/latest"><img src="https://img.shields.io/github/v/release/bnymnDev/agentgate?display_name=tag&color=0b7bd6" alt="release"></a>
   <img src="https://img.shields.io/github/go-mod/go-version/bnymnDev/agentgate?color=00add8" alt="go version">
+  <a href="https://goreportcard.com/report/github.com/bnymnDev/agentgate"><img src="https://goreportcard.com/badge/github.com/bnymnDev/agentgate" alt="go report card"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0-blue" alt="license"></a>
 </p>
 
@@ -368,6 +369,8 @@ make e2e        # the real binary in front of a real MCP server
 make dev        # proxy + web UI against a demo server, nothing to install
 make lint
 ```
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) for how to report a vulnerability. Changes between releases are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

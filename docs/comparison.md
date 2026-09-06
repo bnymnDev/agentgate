@@ -78,9 +78,9 @@ Sandbox for the blast radius. agentgate for the semantics, and for the record.
 - **You want a model to judge whether a call is safe.** Explicitly a non-goal.
   Rules here are deterministic, and the reason for that is `replay`: a decision
   you cannot reproduce is a decision you cannot test.
-- **You want central policy for a team.** v0.1 is local, single-user, single
+- **You want central policy for a team.** v0.3 is local, single-user, single
   file. No server, no sync, no accounts.
-- **You want to govern prompts, sampling or resources.** v0.1 governs tools;
+- **You want to govern prompts, sampling or resources.** v0.3 governs tools;
   everything else passes through.
 - **You need an authenticated, internet-facing dashboard.** The UI is localhost
   by design and refuses to bind elsewhere without an explicit flag.
