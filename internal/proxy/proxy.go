@@ -386,10 +386,13 @@ func (p *Proxy) Close() error {
 	return errors.Join(errs...)
 }
 
-// state returns the tracked state of a downstream session, creating it if the
-// session appeared without an initialize agentgate saw (which happens for the
-// stateless HTTP transport).
-func (p *Proxy) state(ss *mcp.ServerSession) *sessionState {
+// state returns the tracked state of the downstream session a call arrived
+// on, creating it if the session appeared without a handshake agentgate saw
+// (which happens for the stateless HTTP transport). In that case the host is
+// whoever the request itself names: since protocol 2026-07-28 every request
+// carries the client's identity in its _meta.
+func (p *Proxy) state(req *mcp.CallToolRequest) *sessionState {
+	ss := req.Session
 	if v, ok := p.sessions.Load(ss); ok {
 		return v.(*sessionState)
 	}
@@ -397,16 +400,16 @@ func (p *Proxy) state(ss *mcp.ServerSession) *sessionState {
 	actual, loaded := p.sessions.LoadOrStore(ss, st)
 	st = actual.(*sessionState)
 	if !loaded {
-		p.recordSessionStart(ss, st, nil)
+		p.recordSessionStart(ss, st, req.ClientInfo())
 	}
 	return st
 }
 
 // recordSessionStart writes the session row and arranges for it to be closed
 // when the downstream connection goes away.
-func (p *Proxy) recordSessionStart(ss *mcp.ServerSession, st *sessionState, params *mcp.InitializeParams) {
-	if params != nil && params.ClientInfo != nil {
-		st.hostInfo(params.ClientInfo.Name, params.ClientInfo.Version)
+func (p *Proxy) recordSessionStart(ss *mcp.ServerSession, st *sessionState, client *mcp.Implementation) {
+	if client != nil {
+		st.hostInfo(client.Name, client.Version)
 	}
 	if p.store != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

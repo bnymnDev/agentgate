@@ -34,6 +34,12 @@ linters:
       # The demo server is a fixture, not a product.
       - path: testdata/
         linters: [revive]
+      # Roots and logging are deprecated by SEP-2577 but stay functional for
+      # at least a year, and hosts still speak them. agentgate sits between a
+      # host and its servers, so it keeps relaying them until they are gone.
+      - path: internal/proxy/
+        linters: [staticcheck]
+        text: "SA1019: .*SEP-2577"
 
 formatters:
   enable:

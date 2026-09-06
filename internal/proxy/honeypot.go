@@ -47,7 +47,7 @@ func (p *Proxy) registerHoneypots(cfg *config.Config) {
 func (p *Proxy) honeypotHandler(name string) mcp.ToolHandler {
 	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		cfg := p.Config()
-		st := p.state(req.Session)
+		st := p.state(req)
 		now := time.Now()
 		args := req.Params.Arguments
 
