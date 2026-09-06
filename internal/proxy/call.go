@@ -28,7 +28,7 @@ func (p *Proxy) toolHandler(u *upstream, b ToolBinding) mcp.ToolHandler {
 // to the upstream server.
 func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	cfg := p.Config()
-	st := p.state(req.Session)
+	st := p.state(req)
 	started := time.Now()
 
 	args := req.Params.Arguments

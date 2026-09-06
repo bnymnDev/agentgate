@@ -17,6 +17,10 @@ list are on the [releases page](https://github.com/bnymnDev/agentgate/releases).
 
 - Documentation refers to the current release instead of v0.1 where it
   described known limits.
+- Hosts that open with `server/discover` (MCP protocol 2026-07-28) are
+  recorded with their name and version like hosts that send `initialize`;
+  before, such sessions showed an empty host and a tripped honeypot named
+  an unknown host. Needed for go-sdk 1.7.0, which speaks that protocol.
 
 ## [0.3.0] - 2026-09-04
 

@@ -18,7 +18,7 @@ import (
 func (p *Proxy) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 	return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
 		switch method {
-		case "initialize":
+		case "initialize", "server/discover":
 			return p.onInitialize(ctx, method, req, next)
 		case "resources/read":
 			return p.onReadResource(ctx, method, req, next)
@@ -34,7 +34,11 @@ func (p *Proxy) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 }
 
 // onInitialize lets the SDK do the handshake and then opens the audit session,
-// so that the session row carries the real host name and version.
+// so that the session row carries the real host name and version. Hosts on
+// protocol 2026-07-28 and later open with server/discover instead of
+// initialize; either way the SDK leaves the client's identity on the session
+// once the handshake is through, so it is read from there rather than from
+// the request.
 func (p *Proxy) onInitialize(ctx context.Context, method string, req mcp.Request, next mcp.MethodHandler) (mcp.Result, error) {
 	res, err := next(ctx, method, req)
 	if err != nil {
@@ -44,10 +48,13 @@ func (p *Proxy) onInitialize(ctx context.Context, method string, req mcp.Request
 	if !ok {
 		return res, nil
 	}
-	params, _ := req.GetParams().(*mcp.InitializeParams)
+	var client *mcp.Implementation
+	if init := ss.InitializeParams(); init != nil {
+		client = init.ClientInfo
+	}
 	st := newSessionState(p.catalog.transport)
 	if _, dup := p.sessions.LoadOrStore(ss, st); !dup {
-		p.recordSessionStart(ss, st, params)
+		p.recordSessionStart(ss, st, client)
 	}
 	// Roots are a client feature; mirroring them upstream is what lets a
 	// filesystem server behind agentgate see the same workspace the host sees.
