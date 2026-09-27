@@ -44,9 +44,7 @@ func DefinitionFromJSON(raw []byte) (Definition, error) {
 	if err := json.Unmarshal(raw, &d); err != nil {
 		return d, err
 	}
-	d.InputSchema = compact(d.InputSchema)
-	d.OutputSchema = compact(d.OutputSchema)
-	d.Annotations = compact(d.Annotations)
+	d.canonicalize()
 	return d, nil
 }
 
@@ -125,8 +123,22 @@ func Load(path string) (*Lockfile, error) {
 		if u.Tools == nil {
 			u.Tools = map[string]*Pin{}
 		}
+		// The file is indented for reading; in memory a definition is in
+		// canonical form, so it compares equal to one just offered.
+		for _, pin := range u.Tools {
+			pin.Definition.canonicalize()
+			if pin.Drift != nil {
+				pin.Drift.Definition.canonicalize()
+			}
+		}
 	}
 	return l, nil
+}
+
+func (d *Definition) canonicalize() {
+	d.InputSchema = compact(d.InputSchema)
+	d.OutputSchema = compact(d.OutputSchema)
+	d.Annotations = compact(d.Annotations)
 }
 
 // Path is where the lockfile lives.

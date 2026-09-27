@@ -58,6 +58,9 @@ func TestLockfileLifecycle(t *testing.T) {
 	for _, r := range l.Check("fs", tools, nil) {
 		require.Equal(t, StatusPinned, r.Status)
 	}
+	// The file is indented; what is loaded from it is not, so a pinned
+	// schema reads the same as the one a server offers.
+	require.Equal(t, string(tools[0].InputSchema), string(l.Pinned("fs", "read_file").Definition.InputSchema))
 
 	// The rug pull: same name, different description. Plus a new tool, and
 	// one that went away.
