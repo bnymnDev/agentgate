@@ -104,6 +104,13 @@ runs:
       run: |
         set -euo pipefail
         "$AGENTGATE" policy validate "$CONFIG"
+        # policy lint and test came with 0.4.0; an older release only validates.
+        installed=$("$AGENTGATE" --version | awk '{print $3}')
+        case "$installed" in
+          0.[0-3].*|v0.[0-3].*)
+            echo "::notice::agentgate $installed has no policy lint or test; they run from 0.4.0 on"
+            exit 0 ;;
+        esac
         case "$LINT" in
           off) ;;
           warn) "$AGENTGATE" policy lint "$CONFIG" || echo "::warning::agentgate policy lint found problems in $CONFIG" ;;

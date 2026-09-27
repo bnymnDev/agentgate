@@ -63,10 +63,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # The release notes open with the version's section of CHANGELOG.md;
+      # goreleaser adds the commits and the install instructions after it.
+      - name: release notes from the changelog
+        env:
+          VERSION: ${{ inputs.version || github.ref_name }}
+        run: |
+          set -euo pipefail
+          v="${VERSION#v}"
+          awk -v v="$v" 'index($0, "## [" v "]") == 1 {on=1; next} on && /^## \[/ {exit} on && /^\[[^]]+\]: http/ {exit} on {print}' \
+            CHANGELOG.md > "$RUNNER_TEMP/release-header.md"
+          if [ ! -s "$RUNNER_TEMP/release-header.md" ]; then
+            echo "::warning::CHANGELOG.md has no section for $v; the release notes are the commit list alone"
+          fi
+          cat "$RUNNER_TEMP/release-header.md"
+
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: latest
-          args: release --clean
+          args: release --clean --release-header ${{ runner.temp }}/release-header.md
         env:
           # Publishes the release, pushes the image and commits the Homebrew
           # cask into this repository's Casks/ directory; no other secret is
