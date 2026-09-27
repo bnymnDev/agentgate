@@ -23,8 +23,8 @@ import (
 	"time"
 
 	"github.com/oklog/ulid/v2"
-
-	_ "modernc.org/sqlite" // pure Go driver, no cgo
+	"modernc.org/sqlite" // pure Go driver, no cgo
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 //go:embed migrations/*.sql
@@ -97,7 +97,7 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 	// SQLite tolerates exactly one writer; a single connection removes lock
 	// contention entirely and the query volume here is tiny.
 	db.SetMaxOpenConns(1)
-	if err := db.PingContext(ctx); err != nil {
+	if err := retryBusy(ctx, func() error { return db.PingContext(ctx) }); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("audit: opening %s: %w", opts.Path, err)
 	}
@@ -110,7 +110,7 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 		closing:  make(chan struct{}),
 	}
 	if !opts.ReadOnly {
-		if err := s.migrate(ctx); err != nil {
+		if err := retryBusy(ctx, func() error { return s.migrate(ctx) }); err != nil {
 			db.Close()
 			return nil, err
 		}
@@ -273,6 +273,40 @@ func (s *Store) migrate(ctx context.Context) error {
 	return nil
 }
 
+// retryBusy runs fn again while SQLite says the database is locked. The busy
+// timeout covers most contention, but not all of it: switching a brand-new
+// database to WAL, or two processes creating it at the same moment, can
+// report "locked" straight away. That happens when several hosts start their
+// agentgate at once, and is worth a few quick retries rather than a failed
+// start.
+func retryBusy(ctx context.Context, fn func() error) error {
+	deadline := time.Now().Add(10 * time.Second)
+	wait := 10 * time.Millisecond
+	for {
+		err := fn()
+		if err == nil || !isBusy(err) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(wait):
+		}
+		wait = min(wait*2, 250*time.Millisecond)
+	}
+}
+
+func isBusy(err error) bool {
+	var se *sqlite.Error
+	if errors.As(err, &se) {
+		switch se.Code() & 0xff {
+		case sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED:
+			return true
+		}
+	}
+	return false
+}
+
 // upgrade applies pending migrations to an existing database, and nothing
 // else: no retention job, no write queue. A database that is already up to
 // date is only read, so this works on one the user cannot write to.
@@ -304,7 +338,7 @@ func upgrade(ctx context.Context, path string, log *slog.Logger) error {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, log: log}
-	if err := s.migrate(ctx); err != nil {
+	if err := retryBusy(ctx, func() error { return s.migrate(ctx) }); err != nil {
 		return fmt.Errorf("%w (the database was written by an older agentgate and could not be upgraded)", err)
 	}
 	return nil
