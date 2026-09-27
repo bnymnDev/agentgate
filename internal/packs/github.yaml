@@ -1,0 +1,44 @@
+name: github
+description: >-
+  For GitHub, GitLab and Gitea servers, by tool name: deleting a repository is
+  denied; merging, writing to the default branch, changing settings and
+  anything other people will see — issues, comments, pull requests, releases —
+  waits for a human. Reads are left alone.
+rules:
+  - id: delete-repository
+    tool: "*"
+    when:
+      tool_name: { regex: '(?i)^(delete_repository|delete_repo|repo_delete|delete_project)$' }
+    action: deny
+    reason: "an agent does not delete repositories"
+
+  - id: merge
+    tool: "*"
+    when:
+      tool_name: { regex: '(?i)merge_(pull_request|merge_request|pr)|^merge$' }
+    action: ask
+    reason: "merging changes the default branch"
+
+  - id: default-branch-write
+    tool: "*"
+    when:
+      tool_name: { regex: '(?i)^(create_or_update_file|push_files|delete_file|update_file|create_file|create_commit)$' }
+      "args.{branch,ref}": { in: [main, master] }
+    action: ask
+    reason: "this writes straight to the default branch"
+
+  - id: settings
+    tool: "*"
+    when:
+      tool_name:
+        regex: '(?i)(update_repository|update_repo|create_repository|fork_repository|transfer_repository|add_collaborator|remove_collaborator|update_branch_protection|delete_branch|create_release|update_release|delete_release|create_deploy_key|create_or_update_secret|set_secret|delete_secret|create_webhook|update_webhook|delete_webhook|archive_repository)'
+    action: ask
+    reason: "this changes how the repository is set up"
+
+  - id: public-writes
+    tool: "*"
+    when:
+      tool_name:
+        regex: '(?i)^(create_issue|update_issue|close_issue|add_issue_comment|create_comment|create_pull_request|update_pull_request|close_pull_request|create_pull_request_review|submit_pending_pull_request_review|add_comment_to_pending_review|create_discussion|add_discussion_comment|create_gist|update_gist)$'
+    action: ask
+    reason: "other people will see this"

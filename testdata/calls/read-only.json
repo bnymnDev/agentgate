@@ -1,0 +1,14 @@
+{
+  "policy": "read-only",
+  "calls": [
+    {"tool": "fs__read_file", "upstream": "fs", "tool_name": "read_file", "args": {"path": "/etc/hosts"}},
+    {"tool": "fs__list_directory", "upstream": "fs", "tool_name": "list_directory", "args": {"path": "/"}},
+    {"tool": "fs__directory_tree", "upstream": "fs", "tool_name": "directory_tree", "args": {"path": "/"}},
+    {"tool": "fs__write_file", "upstream": "fs", "tool_name": "write_file", "args": {"path": "/tmp/x"}},
+    {"tool": "fs__write_file", "upstream": "fs", "tool_name": "write_file", "args": {"path": "/home/me/notes/today.md"}},
+    {"tool": "fs__stat", "upstream": "fs", "tool_name": "stat", "args": {"path": "/tmp"}, "annotations": {"read_only": true}},
+    {"tool": "db__query", "upstream": "db", "tool_name": "query", "args": {"sql": "SELECT * FROM users"}},
+    {"tool": "db__query", "upstream": "db", "tool_name": "query", "args": {"sql": "DELETE FROM users WHERE id = 1"}},
+    {"tool": "db__execute", "upstream": "db", "tool_name": "execute", "args": {"sql": "SELECT 1"}}
+  ]
+}

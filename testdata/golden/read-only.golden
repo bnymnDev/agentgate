@@ -1,0 +1,9 @@
+ 0  allow  fs__read_file                   read-only/read-verbs          the tool's name says it only reads
+ 1  allow  fs__list_directory              read-only/read-verbs          the tool's name says it only reads
+ 2  allow  fs__directory_tree              read-only/read-verbs          the tool's name says it only reads
+ 3  deny   fs__write_file                  read-only/everything-else     read-only pack: this agent may look, not touch
+ 4  allow  fs__write_file                  notes-are-fine                matched rule notes-are-fine (fs.write_file)
+ 5  allow  fs__stat                        read-only/annotated-read-only  the server marks this tool as read-only
+ 6  allow  db__query                       read-only/read-verbs          the tool's name says it only reads
+ 7  deny   db__query                       read-only/sql-write           read-only pack: this SQL writes
+ 8  deny   db__execute                     read-only/everything-else     read-only pack: this agent may look, not touch

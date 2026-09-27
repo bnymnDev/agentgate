@@ -110,15 +110,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := Parse(raw)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	cfg.Path = abs
+	cfg, err := parse(raw, abs)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	return cfg, nil
 }
 
@@ -126,12 +125,20 @@ func Load(path string) (*Config, error) {
 // misspelled key is caught by "agentgate policy validate" rather than silently
 // ignored at run time.
 func Parse(raw []byte) (*Config, error) {
+	return parse(raw, "")
+}
+
+// parse decodes and validates config bytes read from path. The path is where
+// relative pack files and the lockfile are looked for; it may be empty for a
+// config that did not come from a file.
+func parse(raw []byte, path string) (*Config, error) {
 	var cfg Config
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, err
 	}
+	cfg.Path = path
 	if err := cfg.normalize(); err != nil {
 		return nil, err
 	}
@@ -234,6 +241,9 @@ func (c *Config) normalize() error {
 		}
 	}
 
+	if err := c.expandPacks(); err != nil {
+		errs = append(errs, err)
+	}
 	if err := c.Policy.Compile(); err != nil {
 		errs = append(errs, err)
 	}
@@ -262,6 +272,16 @@ func (c *Config) Prefixed(u *Upstream, tool string) string {
 		return tool
 	}
 	return u.Name + c.PrefixSeparator + tool
+}
+
+// Upstream returns the configured upstream with this name, or nil.
+func (c *Config) Upstream(name string) *Upstream {
+	for i := range c.Upstreams {
+		if c.Upstreams[i].Name == name {
+			return &c.Upstreams[i]
+		}
+	}
+	return nil
 }
 
 // SplitTool resolves an exposed tool name back to an upstream and the name the

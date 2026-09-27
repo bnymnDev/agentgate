@@ -36,23 +36,34 @@ type Condition struct {
 // which denies as soon as a single item points outside the directory. Requiring
 // every item to match would let a batch through because one entry in it was
 // fine, and a guardrail that under-blocks is worse than one that over-blocks.
+//
+// includes and excludes are the exception: they look at all the values at
+// once, with any list among them opened up, and ask whether one item is
+// among them. That is the question to put to a list like session.called —
+// "has the session run the tests?" — which not_equals cannot answer, because
+// any other tool in the list is not equal to the tests.
 type Matcher struct {
 	Equals    *any     `yaml:"equals" json:"equals,omitempty"`
 	NotEquals *any     `yaml:"not_equals" json:"not_equals,omitempty"`
 	Regex     *string  `yaml:"regex" json:"regex,omitempty"`
+	NotRegex  *string  `yaml:"not_regex" json:"not_regex,omitempty"`
 	Prefix    *string  `yaml:"prefix" json:"prefix,omitempty"`
 	NotPrefix *string  `yaml:"not_prefix" json:"not_prefix,omitempty"`
 	In        []any    `yaml:"in" json:"in,omitempty"`
 	Gt        *float64 `yaml:"gt" json:"gt,omitempty"`
 	Lt        *float64 `yaml:"lt" json:"lt,omitempty"`
 	Exists    *bool    `yaml:"exists" json:"exists,omitempty"`
+	Includes  *any     `yaml:"includes" json:"includes,omitempty"`
+	Excludes  *any     `yaml:"excludes" json:"excludes,omitempty"`
 
-	re *regexp.Regexp
+	re  *regexp.Regexp
+	nre *regexp.Regexp
 }
 
 var matcherKeys = map[string]bool{
-	"equals": true, "not_equals": true, "regex": true, "prefix": true,
+	"equals": true, "not_equals": true, "regex": true, "not_regex": true, "prefix": true,
 	"not_prefix": true, "in": true, "gt": true, "lt": true, "exists": true,
+	"includes": true, "excludes": true,
 }
 
 // UnmarshalYAML accepts the full mapping form as well as two shorthands:
@@ -92,21 +103,51 @@ func (m *Matcher) UnmarshalYAML(node *yaml.Node) error {
 	}
 }
 
-// UnmarshalYAML preserves the order of the conditions in the file.
+// UnmarshalYAML preserves the order of the conditions in the file. Two
+// spellings are accepted: a mapping of path to matcher, and a list of such
+// mappings. The list form exists for the one thing a mapping cannot say —
+// two conditions on the same path:
+//
+//	when:
+//	  - args.path: { prefix: "/" }
+//	  - args.path: { not_prefix: "/home/me/repo/" }
 func (c *Conditions) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
-		return fmt.Errorf("line %d: when: must be a mapping of path to matcher", node.Line)
+	var out Conditions
+	switch node.Kind {
+	case yaml.MappingNode:
+		pairs, err := decodeConditionPairs(node)
+		if err != nil {
+			return err
+		}
+		out = pairs
+	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			if item.Kind != yaml.MappingNode {
+				return fmt.Errorf("line %d: each entry of a when: list must be a mapping of path to matcher", item.Line)
+			}
+			pairs, err := decodeConditionPairs(item)
+			if err != nil {
+				return err
+			}
+			out = append(out, pairs...)
+		}
+	default:
+		return fmt.Errorf("line %d: when: must be a mapping of path to matcher, or a list of them", node.Line)
 	}
+	*c = out
+	return nil
+}
+
+func decodeConditionPairs(node *yaml.Node) (Conditions, error) {
 	out := make(Conditions, 0, len(node.Content)/2)
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		cond := Condition{Path: node.Content[i].Value}
 		if err := node.Content[i+1].Decode(&cond.Matcher); err != nil {
-			return fmt.Errorf("%s: %w", cond.Path, err)
+			return nil, fmt.Errorf("%s: %w", cond.Path, err)
 		}
 		out = append(out, cond)
 	}
-	*c = out
-	return nil
+	return out, nil
 }
 
 // compile validates the matcher and precompiles its regex.
@@ -122,8 +163,9 @@ func (c *Condition) compile() error {
 func (m *Matcher) compile(path string) error {
 	n := 0
 	for _, set := range []bool{
-		m.Equals != nil, m.NotEquals != nil, m.Regex != nil, m.Prefix != nil,
+		m.Equals != nil, m.NotEquals != nil, m.Regex != nil, m.NotRegex != nil, m.Prefix != nil,
 		m.NotPrefix != nil, m.In != nil, m.Gt != nil, m.Lt != nil, m.Exists != nil,
+		m.Includes != nil, m.Excludes != nil,
 	} {
 		if set {
 			n++
@@ -131,9 +173,18 @@ func (m *Matcher) compile(path string) error {
 	}
 	switch {
 	case n == 0:
-		return fmt.Errorf("%s: matcher is empty, expected one of equals, not_equals, regex, prefix, not_prefix, in, gt, lt, exists", path)
+		return fmt.Errorf("%s: matcher is empty, expected one of equals, not_equals, regex, not_regex, prefix, not_prefix, in, gt, lt, exists, includes, excludes", path)
 	case n > 1 && (m.Gt == nil || m.Lt == nil || n != 2):
 		return fmt.Errorf("%s: matcher sets %d conditions, expected exactly one (gt+lt may be combined)", path, n)
+	}
+	for name, v := range map[string]*any{"includes": m.Includes, "excludes": m.Excludes} {
+		if v == nil {
+			continue
+		}
+		switch (*v).(type) {
+		case []any, map[string]any:
+			return fmt.Errorf("%s: %s takes a single value; write one condition per value in a when: list", path, name)
+		}
 	}
 	if m.Regex != nil {
 		re, err := regexp.Compile(*m.Regex)
@@ -141,6 +192,13 @@ func (m *Matcher) compile(path string) error {
 			return fmt.Errorf("%s: invalid regex %q: %w", path, *m.Regex, err)
 		}
 		m.re = re
+	}
+	if m.NotRegex != nil {
+		re, err := regexp.Compile(*m.NotRegex)
+		if err != nil {
+			return fmt.Errorf("%s: invalid regex %q: %w", path, *m.NotRegex, err)
+		}
+		m.nre = re
 	}
 	return nil
 }
@@ -152,14 +210,39 @@ func (c *Condition) holds(call *Call) bool {
 	}
 	values := c.sel.resolve(call)
 	m := &c.Matcher
-	if m.Exists != nil {
+	switch {
+	case m.Exists != nil:
 		return (len(values) > 0) == *m.Exists
+	case m.Includes != nil:
+		return hasItem(values, *m.Includes)
+	case m.Excludes != nil:
+		// Nothing at all excludes everything: a session that has called no
+		// tool has not called the tests either.
+		return !hasItem(values, *m.Excludes)
 	}
 	// "Missing path -> condition false" holds for every other matcher,
 	// the negative ones included: there is nothing to make a claim about.
 	// Use exists: false to match on absence.
 	for _, v := range values {
 		if m.matchOne(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasItem reports whether want is among values, looking inside any list.
+func hasItem(values []any, want any) bool {
+	for _, v := range values {
+		if list, ok := v.([]any); ok {
+			for _, item := range list {
+				if jsonEqual(item, want) {
+					return true
+				}
+			}
+			continue
+		}
+		if jsonEqual(v, want) {
 			return true
 		}
 	}
@@ -178,6 +261,8 @@ func (m *Matcher) matchOne(v any) bool {
 		return !strings.HasPrefix(stringify(v), *m.NotPrefix)
 	case m.re != nil:
 		return m.re.MatchString(stringify(v))
+	case m.nre != nil:
+		return !m.nre.MatchString(stringify(v))
 	case m.In != nil:
 		for _, want := range m.In {
 			if jsonEqual(v, want) {

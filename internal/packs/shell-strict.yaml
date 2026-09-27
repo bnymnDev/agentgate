@@ -1,0 +1,53 @@
+name: shell-strict
+description: >-
+  A stricter shell on top of baseline: reverse shells, decode-and-run tricks
+  and shutting the machine down are denied; sudo, system package installs and
+  persistence in shell profiles, cron and services wait for a human.
+rules:
+  - id: reverse-shell
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)(\bnc(at)?\b[^;&|]*\s-[a-z]*e\s|/dev/(tcp|udp)/|\bbash\s+-i\s*>&|\bsocat\b[^;&|]*\bexec:|\bmkfifo\b[^;&]*\|\s*(nc|ncat)\b|\bpython[23]?\s+-c\s+["''][^"'']*socket[^"'']*connect)'
+    action: deny
+    reason: "this opens a reverse shell"
+
+  - id: decode-and-run
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)(base64\s+(-d|--decode|-D)|xxd\s+-r|openssl\s+(enc\s+)?-d)[^;&]*\|\s*(sudo\s+)?(ba|z|k|da)?sh\b|\beval\s+["''$(]'
+    action: deny
+    reason: "running decoded or eval'd text hides what is being executed"
+
+  - id: power
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)(^|[;&|]\s*|\s)(shutdown|reboot|halt|poweroff|init\s+[06])(\s|;|&|$)'
+    action: deny
+    reason: "an agent does not turn the machine off"
+
+  - id: sudo
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(^|[;&|(]\s*|\s)(sudo|doas|pkexec)\s'
+    action: ask
+    reason: "this runs with root privileges"
+
+  - id: system-packages
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)\b(apt(-get)?\s+(install|remove|purge)|yum\s+(install|remove)|dnf\s+(install|remove)|apk\s+add|pacman\s+-S|brew\s+(install|uninstall)|npm\s+(i|install|uninstall)\s+(-g|--global)|snap\s+install|choco\s+install|winget\s+install)\b'
+    action: ask
+    reason: "this installs or removes software on the machine"
+
+  - id: persistence
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)(>>?\s*["'']?(~|\$HOME|/home/[^/\s]+|/root)?/?\.(bashrc|zshrc|profile|bash_profile|zprofile|config/fish/config\.fish)\b|\bcrontab\b|\bsystemctl\s+(enable|start|daemon-reload)|\blaunchctl\s+(load|bootstrap)|/etc/(cron|systemd|init\.d|rc\.local)|authorized_keys)'
+    action: ask
+    reason: "this makes something run again later, or lets someone back in"

@@ -1,0 +1,29 @@
+name: filesystem
+description: >-
+  Writes are confined to one directory. Any tool whose name says it writes,
+  edits, moves, creates or deletes, and whose path argument is absolute and
+  outside the workspace, is denied; so is a relative path that climbs out with
+  "..". Paths are expected to be absolute, as the reference filesystem server
+  uses them.
+params:
+  workspace:
+    description: The directory the agent may write to, e.g. /home/me/repo.
+    required: true
+    path: true
+rules:
+  - id: write-outside-workspace
+    tool: "*"
+    when:
+      - tool_name: { regex: '(?i)(write|edit|create|move|rename|delete|remove|append|patch|replace|mkdir|copy|upload|save)' }
+      - "args.{path,file_path,filePath,destination,target,dest,new_path,newPath,to}": { regex: '^(/|~|[A-Za-z]:[\\/])' }
+      - "args.{path,file_path,filePath,destination,target,dest,new_path,newPath,to}": { not_prefix: "{{workspace}}/" }
+    action: deny
+    reason: "writes are confined to {{workspace}}"
+
+  - id: climb-out
+    tool: "*"
+    when:
+      - tool_name: { regex: '(?i)(write|edit|create|move|rename|delete|remove|append|patch|replace|mkdir|copy|upload|save)' }
+      - "args.{path,file_path,filePath,source,destination,target,dest,new_path,newPath,to}": { regex: '(^|[/\\])\.\.([/\\]|$)' }
+    action: deny
+    reason: "a path that climbs out with .. could land anywhere"

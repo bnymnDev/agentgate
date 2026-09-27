@@ -1,0 +1,13 @@
+name: ask-destructive
+description: >-
+  Asks before any tool the server itself describes as destructive. Relies on
+  the MCP tool annotations, so it covers exactly as much as the servers are
+  honest about; tools without annotations are left to other rules.
+rules:
+  - id: server-says-destructive
+    tool: "*"
+    when:
+      annotations.read_only: false
+      annotations.destructive: true
+    action: ask
+    reason: "the server marks this tool as destructive"

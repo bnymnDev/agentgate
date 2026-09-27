@@ -1,0 +1,16 @@
+# The read-only pack, with one exception carved out by hand.
+version: 1
+upstreams:
+  - name: fs
+    stdio: ["testdata/servers/echo"]
+  - name: db
+    stdio: ["testdata/servers/echo"]
+policy:
+  default: allow
+  packs: [read-only]
+  rules:
+    - id: notes-are-fine
+      tool: "fs.write_file"
+      when:
+        args.path: { prefix: "/home/me/notes/" }
+      action: allow

@@ -1,0 +1,21 @@
+name: database
+description: >-
+  Every write to a database waits for a human: INSERT, UPDATE, DELETE, MERGE,
+  COPY FROM, and schema changes. SELECTs go through. Pair it with baseline,
+  which denies the statements that destroy a table outright.
+rules:
+  - id: schema-change
+    tool: "*"
+    when:
+      "args.{sql,query,statement}":
+        regex: '(?i)(^|;)\s*(alter|create|grant|revoke|comment\s+on|reindex|cluster|rename)\b'
+    action: ask
+    reason: "this changes the schema or permissions"
+
+  - id: write
+    tool: "*"
+    when:
+      "args.{sql,query,statement}":
+        regex: '(?i)\b(insert\s+into|update\s+[\w."`]+\s+set|delete\s+from|merge\s+into|upsert|replace\s+into|copy\s+[\w."`]+\s+from|load\s+data)\b'
+    action: ask
+    reason: "this writes to the database"

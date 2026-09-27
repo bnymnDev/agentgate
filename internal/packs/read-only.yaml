@@ -1,0 +1,35 @@
+name: read-only
+description: >-
+  The agent may look but not touch. Tools the server marks read-only, and
+  tools whose names say they only read — get, list, read, search and so on —
+  are allowed; SQL that writes is denied even through a read-sounding tool;
+  everything else is denied. Your own rules still come first, so you can
+  carve out exceptions.
+rules:
+  - id: sql-write
+    tool: "*"
+    when:
+      "args.{sql,query,statement}":
+        regex: '(?i)\b(insert|update|delete|merge|upsert|replace|drop|truncate|alter|create|grant|revoke|copy)\b'
+    action: deny
+    reason: "read-only pack: this SQL writes"
+
+  - id: annotated-read-only
+    tool: "*"
+    when:
+      annotations.read_only: true
+    action: allow
+    reason: "the server marks this tool as read-only"
+
+  - id: read-verbs
+    tool: "*"
+    when:
+      tool_name:
+        regex: '(?i)^(get|list|read|search|find|fetch|show|describe|view|query|stat|lookup|count|head|tail|diff|status|inspect|explain|check|validate|resolve|download|browse|directory_tree|tree)([_-]|$)'
+    action: allow
+    reason: "the tool's name says it only reads"
+
+  - id: everything-else
+    tool: "*"
+    action: deny
+    reason: "read-only pack: this agent may look, not touch"

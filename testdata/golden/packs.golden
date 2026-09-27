@@ -1,0 +1,68 @@
+ 0  deny   shell__exec                     baseline/rm-rf-root           recursive force delete of a root, home, current or wildcard path
+ 1  deny   shell__exec                     baseline/rm-rf-root           recursive force delete of a root, home, current or wildcard path
+ 2  deny   shell__exec                     baseline/rm-rf-root           recursive force delete of a root, home, current or wildcard path
+ 3  deny   shell__exec                     baseline/rm-rf-root           recursive force delete of a root, home, current or wildcard path
+ 4  deny   shell__exec                     baseline/rm-rf-root           recursive force delete of a root, home, current or wildcard path
+ 5  allow  shell__exec                     -                             default allow
+ 6  allow  shell__exec                     -                             default allow
+ 7  deny   shell__exec                     baseline/disk-wipe            this wipes a disk or forks the machine to death
+ 8  deny   shell__exec                     baseline/disk-wipe            this wipes a disk or forks the machine to death
+ 9  deny   shell__exec                     baseline/disk-wipe            this wipes a disk or forks the machine to death
+10  deny   shell__exec                     baseline/chmod-root           recursive permission change on the root directory
+11  allow  shell__exec                     -                             default allow
+12  ask    shell__exec                     baseline/pipe-to-shell        this runs a script straight from the internet
+13  allow  shell__exec                     -                             default allow
+14  deny   shell__exec                     baseline/git-force-push-main  force-pushing main rewrites history everyone else has
+15  deny   shell__exec                     baseline/git-force-push-main  force-pushing main rewrites history everyone else has
+16  deny   shell__exec                     baseline/git-force-push-main  force-pushing main rewrites history everyone else has
+17  ask    shell__exec                     baseline/git-force-push       a force-push rewrites history on the remote
+18  ask    shell__exec                     git-safety/push-tags          pushed tags are hard to take back
+19  ask    shell__exec                     git-safety/push-main          this pushes straight to main
+20  allow  shell__exec                     -                             default allow
+21  ask    shell__exec                     baseline/git-discard-work     this throws away uncommitted work
+22  allow  shell__exec                     allow-clean-in-ci             CI checkouts are thrown away anyway
+23  ask    shell__exec                     git-safety/delete-branch      this deletes a branch
+24  ask    shell__exec                     git-safety/delete-branch      this deletes a branch
+25  ask    shell__exec                     git-safety/rewrite-history    this rewrites history
+26  ask    shell__exec                     git-safety/global-config      this changes git configuration outside the repository
+27  allow  shell__exec                     -                             default allow
+28  deny   shell__exec                     shell-strict/reverse-shell    this opens a reverse shell
+29  deny   shell__exec                     shell-strict/decode-and-run   running decoded or eval'd text hides what is being executed
+30  ask    shell__exec                     shell-strict/sudo             this runs with root privileges
+31  ask    shell__exec                     shell-strict/system-packages  this installs or removes software on the machine
+32  allow  shell__exec                     -                             default allow
+33  ask    shell__exec                     baseline/pipe-to-shell        this runs a script straight from the internet
+34  deny   shell__exec                     shell-strict/power            an agent does not turn the machine off
+35  deny   fs__read_file                   secrets/key-material          this is key material; an agent has no business reading it
+36  allow  fs__read_file                   -                             default allow
+37  deny   fs__read_file                   secrets/key-material          this is key material; an agent has no business reading it
+38  deny   fs__read_multiple_files         secrets/key-material          this is key material; an agent has no business reading it
+39  allow  fs__read_file                   -                             default allow
+40  allow  fs__write_file                  -                             default allow
+41  deny   fs__write_file                  filesystem/write-outside-workspace  writes are confined to /home/me/repo
+42  deny   fs__write_file                  filesystem/write-outside-workspace  writes are confined to /home/me/repo
+43  deny   fs__move_file                   filesystem/write-outside-workspace  writes are confined to /home/me/repo
+44  deny   fs__write_file                  filesystem/climb-out          a path that climbs out with .. could land anywhere
+45  allow  fs__read_file                   -                             default allow
+46  deny   gh__delete_repository           github/delete-repository      an agent does not delete repositories
+47  ask    gh__merge_pull_request          github/merge                  merging changes the default branch
+48  ask    gh__create_or_update_file       github/default-branch-write   this writes straight to the default branch
+49  allow  gh__create_or_update_file       -                             default allow
+50  ask    gh__add_issue_comment           github/public-writes          other people will see this
+51  ask    gh__update_branch_protection    github/settings               this changes how the repository is set up
+52  allow  gh__get_issue                   -                             default allow
+53  deny   db__query                       baseline/sql-drop             dropping or truncating is not for agents
+54  deny   db__query                       baseline/sql-drop             dropping or truncating is not for agents
+55  deny   db__query                       baseline/sql-delete-everything  a DELETE without a WHERE clause empties the table
+56  ask    db__query                       database/write                this writes to the database
+57  deny   db__query                       baseline/sql-update-everything  an UPDATE without a WHERE clause rewrites every row
+58  ask    db__query                       database/write                this writes to the database
+59  ask    db__query                       database/write                this writes to the database
+60  ask    db__query                       database/schema-change        this changes the schema or permissions
+61  allow  db__query                       -                             default allow
+62  ask    fs__delete_tree                 ask-destructive/server-says-destructive  the server marks this tool as destructive
+63  allow  fs__stat                        -                             default allow
+64  ask    shell__deploy                   business-hours/weekend        it is the weekend; changes wait for a human
+65  ask    shell__deploy                   business-hours/before-hours   outside working hours; changes wait for a human
+66  ask    shell__deploy                   business-hours/after-hours    outside working hours; changes wait for a human
+67  allow  shell__deploy                   -                             default allow

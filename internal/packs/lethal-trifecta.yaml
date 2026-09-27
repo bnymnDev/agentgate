@@ -1,0 +1,50 @@
+name: lethal-trifecta
+description: >-
+  An agent that has read untrusted content, can reach private data and can
+  send things out can be talked into leaking that data. This pack labels
+  sessions that fetch web pages, issues or mail as untrusted-input, and from
+  then on asks a human before the session sends anything anywhere.
+labels:
+  - label: untrusted-input
+    tool: "*"
+    when:
+      tool_name:
+        regex: '(?i)(fetch|browse|navigate|scrape|crawl|web_?search|search_web|read_url|get_url|open_url|http_get|download|get_issue|list_issues|search_issues|issue_read|get_pull_request|list_pull_requests|get_comments|read_email|get_email|list_emails|search_emails|get_message|list_messages|read_message|get_page|read_page|screenshot)'
+  - label: untrusted-input
+    tool: "*"
+    when:
+      annotations.open_world: true
+      annotations.read_only: true
+  - label: private-data
+    tool: "*"
+    when:
+      "args.{path,paths,file,files,file_path,filePath,filename,command,cmd}":
+        regex: '(?i)(\.env\b|secret|credential|token|\.ssh/|\.aws/|passw)'
+rules:
+  - id: trifecta
+    tool: "*"
+    when:
+      session.label.untrusted-input: true
+      session.label.private-data: true
+      tool_name:
+        regex: '(?i)(send|post|publish|upload|email|mail|message|comment|reply|create|update|push|webhook|request|fetch|http|navigate|browse|share|exec|run|command)'
+    action: ask
+    reason: "this session read untrusted content and private data; it could be leaking one through the other"
+
+  - id: egress-after-untrusted
+    tool: "*"
+    when:
+      session.label.untrusted-input: true
+      tool_name:
+        regex: '(?i)(send|post|publish|upload|email|mail|message|comment|reply|create|update|push|webhook|request|fetch|http|navigate|browse|share)'
+    action: ask
+    reason: "this session has read untrusted content; anything that can send data out now needs a human"
+
+  - id: shell-egress-after-untrusted
+    tool: "*"
+    when:
+      session.label.untrusted-input: true
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)\b(curl|wget|nc|ncat|ssh|scp|rsync|ftp|sftp|telnet|Invoke-WebRequest|iwr)\b'
+    action: ask
+    reason: "this session has read untrusted content; network commands now need a human"
