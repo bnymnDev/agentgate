@@ -7,6 +7,12 @@ list are on the [releases page](https://github.com/bnymnDev/agentgate/releases).
 
 ## [Unreleased]
 
+### Fixed
+
+- The GitHub Action skips `policy lint` and `test`, with a notice, when it
+  installs a release older than 0.4.0, instead of failing on a command that
+  release does not have.
+
 ## [0.4.0] - 2026-09-27
 
 agentgate stops being only a firewall for what the agent does and starts
