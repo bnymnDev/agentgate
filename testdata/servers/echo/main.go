@@ -6,8 +6,6 @@ package main
 
 import (
 	"context"
-	"errors"
-	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -24,7 +22,7 @@ func main() {
 	err := testserver.New().Run(ctx, &mcp.StdioTransport{})
 	// The client closing stdin is how a stdio session ends; that is not an
 	// error.
-	if err != nil && ctx.Err() == nil && !errors.Is(err, io.EOF) {
+	if ctx.Err() == nil && !testserver.Ended(err) {
 		log.Fatalf("echo server: %v", err)
 	}
 }
