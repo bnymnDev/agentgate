@@ -19,6 +19,9 @@
     {"tool": "fs__read_file", "upstream": "fs", "tool_name": "read_file", "args": {"path": "/tmp/x"}, "counts": {"session": 201}},
     {"tool": "git__merge", "upstream": "git", "tool_name": "merge", "args": {"branch": "feature"}},
     {"tool": "git__merge", "upstream": "git", "tool_name": "merge", "args": {"branch": "feature"}, "session": {"labels": ["reviewed"]}},
-    {"tool": "mail__send_email", "upstream": "mail", "tool_name": "send_email", "args": {"to": "a@example.com"}, "session": {"labels": ["private-data"]}}
+    {"tool": "mail__send_email", "upstream": "mail", "tool_name": "send_email", "args": {"to": "a@example.com"}, "session": {"labels": ["private-data"]}},
+    {"tool": "mail__send_email", "upstream": "mail", "tool_name": "send_email", "args": {"to": "a@example.com"}, "session": {"labels": ["injection-suspected"]}},
+    {"tool": "fs__read_file", "upstream": "fs", "tool_name": "read_file", "args": {"path": "/tmp/x"}, "session": {"labels": ["injection-suspected"]}},
+    {"tool": "web__fetch", "upstream": "web", "tool_name": "fetch", "args": {"url": "https://x.example"}, "session": {"labels": ["canary-read", "untrusted-input"]}}
   ]
 }

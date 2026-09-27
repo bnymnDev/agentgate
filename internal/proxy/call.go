@@ -46,6 +46,11 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		Host:        policy.Host{Name: st.hostName, Version: st.hostVersion},
 		Session:     history,
 	}
+	// A canary on its way out is not a policy question: nothing legitimate
+	// ever sends one, in any mode.
+	if hit, ok := p.findCanary(args, call.Args); ok {
+		return p.canaryTripped(st, b, args, hit, started), nil
+	}
 	decision := policy.Evaluate(&cfg.Policy, call)
 
 	rec := &audit.Call{
@@ -59,8 +64,10 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 	}
 	event := Event{At: started, SessionID: st.id, Host: hostLabel(st), Upstream: b.Upstream, Tool: b.Exposed, Args: args}
 
-	if decision.Action != policy.ActionAllow && cfg.Policy.IsShadow() {
+	if decision.Action != policy.ActionAllow && cfg.Policy.IsShadow() && decision.RuleID != policy.RuleFrozen {
 		// Shadow mode: the record keeps the verdict, the call goes through.
+		// The kill switch is the exception; it is not part of the policy
+		// being tried out, and a frozen gateway stays frozen.
 		rec.Shadow = true
 		rec.Decision, rec.RuleID, rec.Reason = decision.Action, decision.RuleID, decision.Reason
 		p.log.Info("shadow: would have "+verb(decision.Action),
@@ -128,30 +135,40 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		return nil, err
 	}
 
+	// The record keeps the result as the upstream sent it: that is the
+	// evidence, whatever is changed below for the agent's benefit.
+	rec.Result = marshalResult(result)
+	rec.IsError = result != nil && result.IsError
+	builtin := p.inspectResult(st, b, rec.Result)
+
 	if cfg.Policy.RedactResults {
 		if n := p.redactResult(result); n > 0 {
 			p.log.Info("redacted secrets from a tool result before the agent saw it",
 				"session", st.id, "tool", b.Exposed, "replacements", n)
 		}
 	}
+	if cfg.Policy.StripInvisible {
+		if n := stripInvisible(result); n > 0 {
+			p.log.Info("removed invisible characters from a tool result before the agent saw it",
+				"session", st.id, "tool", b.Exposed, "characters", n)
+		}
+	}
 
-	rec.Result = marshalResult(result)
-	rec.IsError = result != nil && result.IsError
-	rec.Labels = p.forwarded(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started)
+	rec.Labels = p.forwarded(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
 	p.store.RecordCall(rec)
 	return result, nil
 }
 
 // forwarded books a call that reached its upstream against the session and
-// applies the policy's label rules to it. It returns the labels the session
-// earned with this call.
-func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time) []string {
-	var labels []string
+// applies the policy's label rules to it, next to the labels agentgate
+// attaches itself. It returns the labels the session earned with this call.
+func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time, builtin ...string) []string {
+	labels := builtin
 	if len(pol.Labels) > 0 {
 		if pol.LabelsReadResult() {
 			call.Result = policy.ResultFromJSON(result)
 		}
-		labels = policy.LabelsFor(pol, call)
+		labels = append(labels, policy.LabelsFor(pol, call)...)
 	}
 	added := st.forwarded(call, tokens, at, labels)
 	if len(added) > 0 {
@@ -188,6 +205,9 @@ func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
 	for i, c := range res.Content {
 		switch t := c.(type) {
 		case *mcp.TextContent:
+			if p.keepsCanary(t.Text) {
+				continue
+			}
 			if out := r.RedactString(t.Text); out != t.Text {
 				n += strings.Count(out, audit.Placeholder) - strings.Count(t.Text, audit.Placeholder)
 				clone := *t
@@ -195,7 +215,7 @@ func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
 				res.Content[i] = &clone
 			}
 		case *mcp.EmbeddedResource:
-			if t.Resource != nil && t.Resource.Text != "" {
+			if t.Resource != nil && t.Resource.Text != "" && !p.keepsCanary(t.Resource.Text) {
 				if out := r.RedactString(t.Resource.Text); out != t.Resource.Text {
 					n += strings.Count(out, audit.Placeholder) - strings.Count(t.Resource.Text, audit.Placeholder)
 					resource := *t.Resource
@@ -209,7 +229,7 @@ func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
 	}
 	if res.StructuredContent != nil {
 		raw, err := json.Marshal(res.StructuredContent)
-		if err == nil {
+		if err == nil && !p.keepsCanary(string(raw)) {
 			if out := r.Redact(raw); !bytes.Equal(out, raw) {
 				var v any
 				if json.Unmarshal(out, &v) == nil {

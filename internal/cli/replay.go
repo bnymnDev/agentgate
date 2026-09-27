@@ -8,7 +8,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/bnymnDev/agentgate/internal/audit"
+	"github.com/bnymnDev/agentgate/internal/canary"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
 	"github.com/bnymnDev/agentgate/internal/proxy"
 	"github.com/bnymnDev/agentgate/internal/replay"
@@ -53,10 +55,11 @@ configured now, and the fresh results are compared with the recorded ones.`,
 			}
 
 			opts := replay.Options{
-				Policy:      &cfg.Policy,
-				OnlyAllowed: onlyAllowed,
-				Host:        policy.Host{Name: sess.HostName, Version: sess.HostVersion},
-				Annotations: catalogAnnotations(cmd.Context(), store),
+				Policy:       &cfg.Policy,
+				OnlyAllowed:  onlyAllowed,
+				Host:         policy.Host{Name: sess.HostName, Version: sess.HostVersion},
+				Annotations:  catalogAnnotations(cmd.Context(), store),
+				ResultLabels: resultLabels(cfg),
 			}
 			if !dryRun {
 				p, err := connectForReplay(cmd.Context(), g, cfg)
@@ -165,6 +168,24 @@ func dryRunLabel(dryRun bool) string {
 		return " — dry run, nothing is sent"
 	}
 	return ""
+}
+
+// resultLabels attaches canary-read and injection-suspected the way the
+// proxy does, so a replay sees the same session history.
+func resultLabels(cfg *config.Config) func(*policy.Result) []string {
+	store, _ := canary.Open(cfg.Canaries.Path)
+	return func(res *policy.Result) []string {
+		var out []string
+		if store != nil {
+			if _, ok := store.Detector().Find(res.Text); ok {
+				out = append(out, policy.LabelCanaryRead)
+			}
+		}
+		if len(pinning.ScanResult(res.Text)) > 0 {
+			out = append(out, policy.LabelInjectionSuspected)
+		}
+		return out
+	}
 }
 
 // catalogAnnotations looks up the tool annotations of the catalogs recorded in

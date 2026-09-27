@@ -57,6 +57,7 @@ untouched.`,
 		newStatusCmd(g),
 		newVerifyCmd(g),
 		newLockCmd(g),
+		newCanaryCmd(g),
 	)
 	return root
 }

@@ -36,6 +36,8 @@ type catalog struct {
 	// announced remembers which drift and scan findings were already
 	// reported by this process, so a refresh does not repeat them.
 	announced map[string]bool
+	// decoy is set once the canary decoy resource is registered.
+	decoy bool
 }
 
 // ToolBinding maps an exposed tool name back to its upstream.
@@ -314,6 +316,7 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 		p.server.AddPrompt(pr.prompt, p.promptHandler(pr.up))
 	}
 	p.registerHoneypots(cfg)
+	p.registerDecoy(cfg)
 
 	p.log.Info("catalog refreshed",
 		"tools", len(tools), "resources", len(resources), "prompts", len(prompts),

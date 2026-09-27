@@ -35,6 +35,10 @@ type Options struct {
 	// catalog a call was made under, keyed by exposed tool name, for
 	// annotations.* conditions. Nil means nothing is known.
 	Annotations func(catalogHash string) map[string]policy.Annotations
+	// ResultLabels returns the labels agentgate itself attaches for a
+	// result (canary-read, injection-suspected), so a replayed session
+	// picks them up where the live one did. Nil attaches none.
+	ResultLabels func(result *policy.Result) []string
 }
 
 // Entry is one recorded call, re-evaluated and possibly re-sent.
@@ -177,11 +181,15 @@ func Run(ctx context.Context, sessionID string, calls []*audit.Call, opts Option
 			(entry.Now.Action == policy.ActionAsk && rec.Decision == policy.ActionAllow)
 		if wentThrough {
 			var labels []string
+			res := policy.ResultFromJSON(result)
+			if opts.ResultLabels != nil && res != nil {
+				labels = append(labels, opts.ResultLabels(res)...)
+			}
 			if len(opts.Policy.Labels) > 0 {
 				if opts.Policy.LabelsReadResult() {
-					call.Result = policy.ResultFromJSON(result)
+					call.Result = res
 				}
-				labels = policy.LabelsFor(opts.Policy, call)
+				labels = append(labels, policy.LabelsFor(opts.Policy, call)...)
 			}
 			track.Forwarded(call, rec.TokensEst, rec.TS)
 			entry.Labels = track.Earn(labels...)

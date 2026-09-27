@@ -59,6 +59,17 @@ type Decision struct {
 	RuleID string `json:"rule_id,omitempty"`
 }
 
+// Labels agentgate itself attaches to a session, next to the ones label
+// rules attach.
+const (
+	// LabelCanaryRead marks a session that got a canary token back from a
+	// tool.
+	LabelCanaryRead = "canary-read"
+	// LabelInjectionSuspected marks a session that got a tool result with
+	// hidden text or instructions addressed to the model.
+	LabelInjectionSuspected = "injection-suspected"
+)
+
 // Ids used for decisions that do not come from a rule in the rules list.
 const (
 	RuleFrozen    = "frozen"
@@ -94,9 +105,15 @@ type Policy struct {
 	// before they reach the agent, not only before they reach the audit log.
 	// It is the one place agentgate deliberately changes a result, and it is
 	// off unless you turn it on.
-	RedactResults bool      `yaml:"redact_results" json:"redact_results,omitempty"`
-	Budget        Budget    `yaml:"budget" json:"budget"`
-	LoopGuard     LoopGuard `yaml:"loop_guard" json:"loop_guard"`
+	RedactResults bool `yaml:"redact_results" json:"redact_results,omitempty"`
+	// StripInvisible removes characters that render as nothing — Unicode tag
+	// characters, zero-width and bidirectional controls — from tool results
+	// before the agent reads them. They are how a web page or an issue
+	// comment smuggles instructions past the person looking at it. Off
+	// unless you turn it on; the audit log keeps the result as it came.
+	StripInvisible bool      `yaml:"strip_invisible" json:"strip_invisible,omitempty"`
+	Budget         Budget    `yaml:"budget" json:"budget"`
+	LoopGuard      LoopGuard `yaml:"loop_guard" json:"loop_guard"`
 	// Labels attach names to a session once a matching call has gone
 	// through, so that later rules can ask what the session has done
 	// ("session.label.untrusted-input"). See LabelsFor.

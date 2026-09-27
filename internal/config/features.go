@@ -40,7 +40,8 @@ type Notify struct {
 type Webhook struct {
 	URL string `yaml:"url"`
 	// Events is the subset to send: deny, ask, honeypot, freeze, drift,
-	// exfiltration, error, shadow. Empty means all but error and shadow.
+	// exfiltration, injection, error, shadow. Empty means all but error and
+	// shadow.
 	Events []string `yaml:"events"`
 	// Format shapes the body: "json" (the default, agentgate's own event
 	// object), "slack", "discord" or "ntfy". The named ones post a message
@@ -63,15 +64,18 @@ const (
 	EventDrift = "drift"
 	// EventExfiltration fires when a canary token shows up in a call.
 	EventExfiltration = "exfiltration"
+	// EventInjection fires when a tool result carries hidden text or
+	// instructions addressed to the model.
+	EventInjection = "injection"
 )
 
 var knownEvents = map[string]bool{
 	EventDeny: true, EventAsk: true, EventHoneypot: true, EventFreeze: true, EventError: true, EventShadow: true,
-	EventDrift: true, EventExfiltration: true,
+	EventDrift: true, EventExfiltration: true, EventInjection: true,
 }
 
 // DefaultWebhookEvents are sent when a webhook does not say which it wants.
-var DefaultWebhookEvents = []string{EventDeny, EventAsk, EventHoneypot, EventFreeze, EventDrift, EventExfiltration}
+var DefaultWebhookEvents = []string{EventDeny, EventAsk, EventHoneypot, EventFreeze, EventDrift, EventExfiltration, EventInjection}
 
 // Wants reports whether the webhook subscribed to an event.
 func (w *Webhook) Wants(event string) bool {
@@ -218,6 +222,49 @@ func (p *Pinning) normalize(configPath string) error {
 		p.Lockfile = path
 	case configPath != "":
 		p.Lockfile = strings.TrimSuffix(configPath, filepath.Ext(configPath)) + ".lock"
+	}
+	return errors.Join(errs...)
+}
+
+// Canaries are fake credentials planted where an agent could read them (see
+// `agentgate canary new`). Nothing legitimate ever sends one anywhere, so a
+// call that carries one out — plain, base64, hex or URL-encoded — is an
+// exfiltration attempt: it is denied and reported, and with action: freeze
+// the whole gateway stops.
+type Canaries struct {
+	// Action is what a canary leaving does beyond denying the call: deny
+	// (the default) or freeze.
+	Action string `yaml:"action"`
+	// Path is the canary store. It defaults to canaries.json next to the
+	// audit database, like the freeze marker.
+	Path string `yaml:"path"`
+	// Resource advertises a decoy MCP resource under this URI whose content
+	// is the canaries' decoy files, e.g. "file:///home/me/.aws/credentials".
+	// Reading it is recorded; empty means no decoy resource.
+	Resource string `yaml:"resource"`
+}
+
+func (c *Canaries) normalize(auditPath string) error {
+	var errs []error
+	if c.Action == "" {
+		c.Action = "deny"
+	}
+	switch c.Action {
+	case "deny", "freeze":
+	default:
+		errs = append(errs, fmt.Errorf("canaries.action: unknown action %q, use deny or freeze", c.Action))
+	}
+	if c.Path == "" {
+		c.Path = filepath.Join(filepath.Dir(auditPath), "canaries.json")
+	} else if p, err := ExpandPath(c.Path); err != nil {
+		errs = append(errs, fmt.Errorf("canaries.path: %w", err))
+	} else {
+		c.Path = p
+	}
+	if c.Resource != "" {
+		if u, err := url.Parse(c.Resource); err != nil || u.Scheme == "" {
+			errs = append(errs, fmt.Errorf("canaries.resource: %q is not a URI", c.Resource))
+		}
 	}
 	return errors.Join(errs...)
 }

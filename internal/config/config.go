@@ -41,6 +41,7 @@ type Config struct {
 	Honeypots       Honeypots     `yaml:"honeypots"`
 	Notify          Notify        `yaml:"notify"`
 	Pinning         Pinning       `yaml:"pinning"`
+	Canaries        Canaries      `yaml:"canaries"`
 
 	// Path is the file the config was read from. It is not part of the file.
 	Path string `yaml:"-"`
@@ -255,6 +256,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, err)
 	}
 	if err := c.Pinning.normalize(c.Path); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Canaries.normalize(c.Audit.Path); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)

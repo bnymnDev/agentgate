@@ -18,6 +18,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bnymnDev/agentgate/internal/audit"
+	"github.com/bnymnDev/agentgate/internal/canary"
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/pinning"
@@ -35,6 +36,7 @@ type Proxy struct {
 	redact   *audit.Redactor
 	approver Approver
 	notify   *notifier
+	canaries *canary.Store
 
 	// cfg is swapped wholesale on hot reload, so it is read under mu.
 	mu        sync.RWMutex
@@ -157,6 +159,14 @@ func New(opts Options) (*Proxy, error) {
 		p.approver = DenyApprover{}
 	}
 	p.notify = newNotifier(p)
+	if path := opts.Config.Canaries.Path; path != "" {
+		store, err := canary.Open(path)
+		if err != nil {
+			log.Error("cannot read the canaries; exfiltration checks are off", "path", path, "error", err)
+		} else {
+			p.canaries = store
+		}
+	}
 	for i := range opts.Config.Upstreams {
 		u := &upstream{
 			cfg: &opts.Config.Upstreams[i],
