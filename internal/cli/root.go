@@ -59,6 +59,8 @@ untouched.`,
 		newLockCmd(g),
 		newCanaryCmd(g),
 		newMockCmd(g),
+		newInitCmd(),
+		newUninstallCmd(),
 	)
 	return root
 }
