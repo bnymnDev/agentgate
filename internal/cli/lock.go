@@ -2,9 +2,9 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -19,6 +19,7 @@ func newLockCmd(g *globals) *cobra.Command {
 		check  bool
 		trust  []string
 		asJSON bool
+		colour string
 	)
 	cmd := &cobra.Command{
 		Use:   "lock",
@@ -39,6 +40,10 @@ A running agentgate notices the lockfile change and releases a trusted tool
 without a restart.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			useColour, err := colourFlag(colour)
+			if err != nil {
+				return err
+			}
 			cfg, err := g.load()
 			if err != nil {
 				return err
@@ -79,7 +84,8 @@ without a restart.`,
 					return err
 				}
 			} else {
-				printLock(cmd.OutOrStdout(), cfg, reports)
+				w := &lineWriter{out: cmd.OutOrStdout(), colour: useColour}
+				printLock(w, cfg, reports)
 			}
 			if check && !lockClean(reports) {
 				return errExitDenied
@@ -90,6 +96,7 @@ without a restart.`,
 	cmd.Flags().BoolVar(&check, "check", false, "exit 1 if any tool is new, changed, removed, unpinned or flagged")
 	cmd.Flags().StringArrayVar(&trust, "trust", nil, "trust a tool as it is offered now, as upstream.tool; '*' trusts everything (repeatable)")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the reports as JSON")
+	cmd.Flags().StringVar(&colour, "color", "auto", "colour the output: auto, always or never")
 	return cmd
 }
 
@@ -102,7 +109,8 @@ func lockClean(reports []proxy.ToolReport) bool {
 	return true
 }
 
-func printLock(out io.Writer, cfg *config.Config, reports []proxy.ToolReport) {
+func printLock(w *lineWriter, cfg *config.Config, reports []proxy.ToolReport) {
+	out := w.out
 	fmt.Fprintf(out, "lockfile  %s (mode %s, scan %s)\n\n", cfg.Pinning.Lockfile, cfg.Pinning.Mode, cfg.Pinning.Scan)
 	if len(reports) == 0 {
 		fmt.Fprintln(out, "no tools offered")
@@ -127,44 +135,61 @@ func printLock(out io.Writer, cfg *config.Config, reports []proxy.ToolReport) {
 	}
 	t.flush()
 
-	attention := 0
+	var attention []string
 	for _, r := range reports {
 		if r.Status != pinning.StatusChanged && r.Status != pinning.StatusNew && len(r.Findings) == 0 {
 			continue
 		}
-		attention++
-		fmt.Fprintf(out, "\n%s.%s  %s\n", r.Upstream, r.Tool, r.Status)
+		attention = append(attention, r.Upstream+"."+r.Tool)
+		fmt.Fprintf(out, "\n%s  %s\n", r.Upstream+"."+r.Tool, w.paint(colourYellow, string(r.Status)))
 		if r.Status == pinning.StatusChanged && r.Pinned != nil {
-			printDefinitionChange(out, *r.Pinned, r.Current)
+			printDefinitionChange(w, *r.Pinned, r.Current)
 		}
 		if r.Status == pinning.StatusNew {
-			fmt.Fprintf(out, "  description: %s\n", indentText(pinning.Reveal(r.Current.Description), "               "))
+			fmt.Fprintf(out, "  description: %s\n", w.revealed(indentText(pinning.Reveal(r.Current.Description), "               ")))
 		}
 		for _, f := range r.Findings {
-			fmt.Fprintf(out, "  finding  %s: %s\n", f.Where, f.Detail)
+			fmt.Fprintf(out, "  %s  %s: %s\n", w.paint(colourRed, "finding"), f.Where, f.Detail)
 			if f.Excerpt != "" {
-				fmt.Fprintf(out, "           %q\n", pinning.Reveal(f.Excerpt))
+				fmt.Fprintf(out, "           %s\n", w.revealed(fmt.Sprintf("%q", pinning.Reveal(f.Excerpt))))
 			}
 		}
 	}
-	if attention > 0 {
-		fmt.Fprintln(out, "\nTrust a tool as it is now with agentgate lock --trust upstream.tool, or all of them with --trust '*'.")
+	switch len(attention) {
+	case 0:
+	case 1:
+		fmt.Fprintf(out, "\n%s\n", w.dim("If that is expected: agentgate lock --trust "+attention[0]))
+	default:
+		fmt.Fprintf(out, "\n%s\n", w.dim("Trust what is expected with agentgate lock --trust upstream.tool, or all of it with --trust '*'."))
 	}
 }
 
-func printDefinitionChange(out io.Writer, before, after pinning.Definition) {
+func printDefinitionChange(w *lineWriter, before, after pinning.Definition) {
 	field := func(name, a, b string) {
 		if a == b {
 			return
 		}
-		fmt.Fprintf(out, "  %s\n    pinned: %s\n    now:    %s\n", name,
-			indentText(pinning.Reveal(a), "            "), indentText(pinning.Reveal(b), "            "))
+		fmt.Fprintf(w.out, "  %s\n    pinned: %s\n    now:    %s\n", name,
+			w.revealed(indentText(pinning.Reveal(a), "            ")), w.revealed(indentText(pinning.Reveal(b), "            ")))
 	}
 	field("title", before.Title, after.Title)
 	field("description", before.Description, after.Description)
 	field("input schema", string(before.InputSchema), string(after.InputSchema))
 	field("output schema", string(before.OutputSchema), string(after.OutputSchema))
 	field("annotations", string(before.Annotations), string(after.Annotations))
+}
+
+// revealedSpan is what pinning.Reveal spells out: hidden text, and invisible
+// characters by code point.
+var revealedSpan = regexp.MustCompile(`«[^»]*»`)
+
+// revealed paints what pinning.Reveal spelled out, so it stands out from the
+// text around it.
+func (w *lineWriter) revealed(s string) string {
+	if !w.colour {
+		return s
+	}
+	return revealedSpan.ReplaceAllStringFunc(s, func(m string) string { return w.paint(colourRed, m) })
 }
 
 func indentText(s, indent string) string {

@@ -5,6 +5,7 @@ import (
 	"io"
 	"strings"
 	"text/tabwriter"
+	"unicode/utf8"
 )
 
 // table is a very small aligned-column writer. The CLI prints a handful of
@@ -38,13 +39,14 @@ func (t *table) flush() { t.w.Flush() }
 // truncate shortens a string for a table cell, keeping it on one line.
 func truncate(s string, n int) string {
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\t", " ")
-	if len(s) <= n {
+	if utf8.RuneCountInString(s) <= n {
 		return s
 	}
+	r := []rune(s)
 	if n <= 1 {
-		return s[:n]
+		return string(r[:max(n, 0)])
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 // shortID is the first 10 characters of a ULID, which is plenty to identify a
