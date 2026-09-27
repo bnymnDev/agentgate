@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -85,7 +86,9 @@ func TestInstallAndUninstall(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(raw, &parsed))
 	require.Len(t, parsed.MCPServers, 2)
-	require.JSONEq(t, `{"command":"/usr/local/bin/agentgate","args":["run","--config","`+inst.Config+`"]}`, string(parsed.MCPServers["agentgate"]))
+	want, err := json.Marshal(map[string]any{"command": "/usr/local/bin/agentgate", "args": []string{"run", "--config", inst.Config}})
+	require.NoError(t, err)
+	require.JSONEq(t, string(want), string(parsed.MCPServers["agentgate"]))
 	require.Contains(t, parsed.MCPServers, "old")
 
 	// The generated config is a valid agentgate config with every server.
@@ -96,9 +99,11 @@ func TestInstallAndUninstall(t *testing.T) {
 	require.Equal(t, "ghp_example<&>", cfg.Upstreams[1].Env["GITHUB_PERSONAL_ACCESS_TOKEN"])
 	require.Equal(t, "https://mcp.example.com/mcp", cfg.Upstreams[2].HTTP)
 	require.True(t, cfg.Policy.IsShadow())
-	info, err := os.Stat(inst.Config)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "it holds the servers' secrets")
+	if runtime.GOOS != "windows" { // Windows has no permission bits to check
+		info, err := os.Stat(inst.Config)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "it holds the servers' secrets")
+	}
 
 	// Installing twice is refused.
 	cands, err = Scan(env, manifest)

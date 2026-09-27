@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -95,9 +96,11 @@ func TestStore(t *testing.T) {
 	_, ok := s.Detector().Find("key " + c.Values[1])
 	require.True(t, ok, "the secret half of an AWS pair is a canary too")
 
-	info, err := os.Stat(path)
-	require.NoError(t, err)
-	require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the store holds the canaries, keep it private")
+	if runtime.GOOS != "windows" { // Windows has no permission bits to check
+		info, err := os.Stat(path)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "the store holds the canaries, keep it private")
+	}
 
 	// Another process adds one; this one notices.
 	other, err := Open(path)
