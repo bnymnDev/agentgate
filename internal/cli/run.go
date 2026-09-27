@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,6 +16,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/proxy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 	"github.com/bnymnDev/agentgate/internal/ui"
 )
 
@@ -86,6 +88,18 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 		}()
 	}
 
+	exporter, err := telemetry.New(cfg.Telemetry.OTLP, version(), log)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := exporter.Close(shutdown); err != nil {
+			log.Warn("flushing telemetry", "error", err)
+		}
+	}()
+
 	inbox := proxy.NewInbox()
 	transport := "stdio"
 	if opts.httpAddr != "" {
@@ -96,8 +110,9 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 		Store:               store,
 		Redactor:            audit.NewRedactor(cfg.Audit.Redactors()),
 		Logger:              log,
-		Approver:            buildApprover(cfg, inbox, opts.uiAddr != "", log),
+		Approver:            buildApprover(ctx, cfg, inbox, opts.uiAddr != "", log),
 		DownstreamTransport: transport,
+		Telemetry:           exporter,
 	})
 	if err != nil {
 		return err
@@ -156,7 +171,22 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 // buildApprover decides who answers an "ask" rule. The choice is deliberate and
 // logged, because a policy that says "ask" and silently means "deny" is worse
 // than one that says "deny".
-func buildApprover(cfg *config.Config, inbox *proxy.Inbox, uiRunning bool, log *slog.Logger) proxy.Approver {
+func buildApprover(ctx context.Context, cfg *config.Config, inbox *proxy.Inbox, uiRunning bool, log *slog.Logger) proxy.Approver {
+	var phone *proxy.NtfyApprover
+	if n := cfg.Approval.Ntfy; n != nil {
+		redactor := audit.NewRedactor(cfg.Audit.Redactors())
+		phone = &proxy.NtfyApprover{
+			Server: n.Server, Topic: n.Topic, Token: n.Token,
+			Redact: redactor.Redact,
+			Client: &http.Client{Timeout: 15 * time.Second},
+			Log:    log,
+		}
+	}
+	listen := func() {
+		if phone != nil {
+			go phone.Run(ctx)
+		}
+	}
 	switch cfg.Approval.Mode {
 	case "deny":
 		return proxy.DenyApprover{Reason: "approval required, approvals are disabled (approval.mode: deny)"}
@@ -172,19 +202,32 @@ func buildApprover(cfg *config.Config, inbox *proxy.Inbox, uiRunning bool, log *
 		}
 		log.Warn("approval.mode is tty but no terminal is attached; ask rules will deny")
 		return proxy.DenyApprover{}
-	default: // auto
-		var chain proxy.ChainApprover
+	case "ntfy":
+		listen()
+		log.Info("approvals go to your phone", "server", phone.Server)
+		return phone
+	default: // auto: every channel at once, first answer wins
+		var channels proxy.FanoutApprover
+		var names []string
 		if uiRunning {
-			chain = append(chain, inbox)
+			channels = append(channels, inbox)
+			names = append(names, "web UI")
 		}
 		if tty := proxy.NewTTYApprover(); tty != nil {
-			chain = append(chain, tty)
+			channels = append(channels, tty)
+			names = append(names, "terminal")
 		}
-		if len(chain) == 0 {
-			log.Info("no approval channel available; ask rules will deny", "hint", "run with --ui to approve in the browser")
+		if phone != nil {
+			listen()
+			channels = append(channels, phone)
+			names = append(names, "phone")
+		}
+		if len(channels) == 0 {
+			log.Info("no approval channel available; ask rules will deny", "hint", "run with --ui to approve in the browser, or set approval.ntfy to approve on your phone")
 			return proxy.DenyApprover{}
 		}
-		return chain
+		log.Info("approvals are asked on", "channels", strings.Join(names, ", "))
+		return channels
 	}
 }
 
@@ -212,6 +255,7 @@ func buildUIServer(opts runOptions, cfg *config.Config, store *audit.Store, inbo
 		},
 		Freeze:   p.Freeze,
 		Unfreeze: p.Unfreeze,
+		Tools:    p,
 		Logger:   log,
 		Version:  version(),
 	})

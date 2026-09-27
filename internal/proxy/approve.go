@@ -95,6 +95,11 @@ func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict
 	// be unanswerable.
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// The question may have been answered on another channel while this
+	// one waited for the terminal.
+	if ctx.Err() != nil {
+		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
+	}
 
 	fmt.Fprintf(t.Out, "\n── agentgate approval ───────────────────────────────\n")
 	fmt.Fprintf(t.Out, "  tool     %s\n", req.Tool)
@@ -122,11 +127,17 @@ func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict
 
 	select {
 	case <-ctx.Done():
-		fmt.Fprintf(t.Out, "\n  no answer, denied\n")
+		if errors.Is(ctx.Err(), context.Canceled) {
+			fmt.Fprintf(t.Out, "\n  answered elsewhere\n")
+		} else {
+			fmt.Fprintf(t.Out, "\n  no answer, denied\n")
+		}
 		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
 	case answer, ok := <-lines:
 		if !ok {
-			return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval required, the terminal was closed"}}, nil
+			// Not an answer: the terminal is gone, so this channel cannot
+			// ask. Another one may still be able to.
+			return Verdict{}, errors.New("the terminal was closed")
 		}
 		switch answer {
 		case "y", "yes":
@@ -269,28 +280,6 @@ func (i *Inbox) Resolve(id string, choice Choice, who string) bool {
 	default:
 		return false
 	}
-}
-
-// ChainApprover tries each approver in turn and uses the first that can answer.
-type ChainApprover []Approver
-
-// Approve asks each approver in order.
-func (c ChainApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
-	var last error
-	for _, a := range c {
-		if a == nil {
-			continue
-		}
-		v, err := a.Approve(ctx, req)
-		if err == nil {
-			return v, nil
-		}
-		last = err
-	}
-	if last == nil {
-		last = errors.New("no approver available")
-	}
-	return Verdict{}, last
 }
 
 func indentArgs(raw json.RawMessage) string {

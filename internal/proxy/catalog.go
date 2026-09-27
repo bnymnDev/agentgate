@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
@@ -25,6 +27,17 @@ type catalog struct {
 	templates map[string]string // uriTemplate -> upstream name
 	prompts   map[string]string // prompt name -> upstream name
 	honeypots map[string]bool   // decoys currently registered on the server
+	// hash names the snapshot of the current tool catalog in the audit log.
+	hash string
+	// quarantined maps the exposed names of tools held back by pinning to
+	// the reason; reports is every tool's standing with the lockfile.
+	quarantined map[string]string
+	reports     []ToolReport
+	// announced remembers which drift and scan findings were already
+	// reported by this process, so a refresh does not repeat them.
+	announced map[string]bool
+	// decoy is set once the canary decoy resource is registered.
+	decoy bool
 }
 
 // ToolBinding maps an exposed tool name back to its upstream.
@@ -42,17 +55,19 @@ type ToolBinding struct {
 
 // annotationsOf translates the server's hints into the policy's view of them,
 // applying the MCP defaults: a tool that has annotations but says nothing
-// about destructiveHint is destructive, and one that says nothing about
-// openWorldHint is open-world. A tool with no annotations at all says nothing,
-// and every annotations.* condition on it is missing.
+// about destructiveHint is destructive unless it is read-only (the spec only
+// gives destructiveHint a meaning for tools that modify their environment),
+// and one that says nothing about openWorldHint is open-world. A tool with no
+// annotations at all says nothing, and every annotations.* condition on it is
+// missing.
 func annotationsOf(t *mcp.Tool) policy.Annotations {
 	if t.Annotations == nil {
 		return policy.Annotations{}
 	}
 	a := t.Annotations
 	readOnly, idempotent := a.ReadOnlyHint, a.IdempotentHint
-	destructive, openWorld := true, true
-	if a.DestructiveHint != nil {
+	destructive, openWorld := !readOnly, true
+	if a.DestructiveHint != nil && !readOnly {
 		destructive = *a.DestructiveHint
 	}
 	if a.OpenWorldHint != nil {
@@ -67,6 +82,25 @@ func annotationsOf(t *mcp.Tool) policy.Annotations {
 	}
 }
 
+// AnnotationsFromCatalog reads a catalog snapshot from the audit log and
+// returns each tool's annotations the way a live call would have seen them,
+// keyed by exposed name. Replay uses it to evaluate annotations.* conditions.
+func AnnotationsFromCatalog(raw []byte) (map[string]policy.Annotations, error) {
+	var entries []audit.CatalogEntry
+	if err := json.Unmarshal(raw, &entries); err != nil {
+		return nil, err
+	}
+	out := make(map[string]policy.Annotations, len(entries))
+	for _, e := range entries {
+		var tool mcp.Tool
+		if err := json.Unmarshal(e.Tool, &tool); err != nil {
+			continue
+		}
+		out[e.Exposed] = annotationsOf(&tool)
+	}
+	return out, nil
+}
+
 // Tools returns the current catalog, sorted by exposed name.
 func (p *Proxy) Tools() []ToolBinding {
 	p.catalog.mu.Lock()
@@ -77,6 +111,13 @@ func (p *Proxy) Tools() []ToolBinding {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Exposed < out[j].Exposed })
 	return out
+}
+
+// catalogHash names the audit snapshot of the tool catalog in force.
+func (p *Proxy) catalogHash() string {
+	p.catalog.mu.Lock()
+	defer p.catalog.mu.Unlock()
+	return p.catalog.hash
 }
 
 // Lookup resolves an exposed tool name to its binding.
@@ -109,6 +150,7 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 
 	type pending struct {
 		tool     *mcp.Tool
+		orig     *mcp.Tool
 		binding  *ToolBinding
 		upstream *upstream
 	}
@@ -139,6 +181,9 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 					errs = append(errs, fmt.Errorf("listing tools of %q: %w", u.name(), err))
 					break
 				}
+				if !u.cfg.Offers(tool.Name) {
+					continue // the model never sees it, so neither does anything else
+				}
 				exposed := cfg.Prefixed(u.cfg, tool.Name)
 				if other, clash := tools[exposed]; clash {
 					errs = append(errs, fmt.Errorf("tool name clash: %q is offered by both %q and %q; give one of them prefix: true",
@@ -149,7 +194,7 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 				tools[exposed] = binding
 				clone := *tool
 				clone.Name = exposed
-				newTools = append(newTools, pending{tool: &clone, binding: binding, upstream: u})
+				newTools = append(newTools, pending{tool: &clone, orig: tool, binding: binding, upstream: u})
 			}
 		}
 		if caps != nil && caps.Resources != nil {
@@ -200,7 +245,45 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 		}
 	}
 
+	offered := make([]offeredTool, 0, len(newTools))
+	for _, t := range newTools {
+		d, err := definitionOf(t.orig)
+		if err != nil {
+			continue
+		}
+		offered = append(offered, offeredTool{upstream: t.binding.Upstream, exposed: t.binding.Exposed, def: d})
+	}
+	held, reports := p.checkPins(cfg, offered)
+	if len(held) > 0 {
+		kept := newTools[:0]
+		for _, t := range newTools {
+			if _, h := held[t.binding.Exposed]; h {
+				delete(tools, t.binding.Exposed)
+				continue
+			}
+			kept = append(kept, t)
+		}
+		newTools = kept
+	}
+
+	entries := make([]audit.CatalogEntry, 0, len(newTools))
+	for _, t := range newTools {
+		def, err := json.Marshal(t.orig)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, audit.CatalogEntry{Upstream: t.binding.Upstream, Exposed: t.binding.Exposed, Tool: def})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].Exposed < entries[j].Exposed })
+	var hash string
+	if raw, err := json.Marshal(entries); err == nil {
+		hash = p.store.SaveCatalog(raw)
+	}
+
 	p.catalog.mu.Lock()
+	p.catalog.hash = hash
+	p.catalog.quarantined = held
+	p.catalog.reports = reports
 	goneTools := missing(p.catalog.tools, tools)
 	goneResources := missingSet(p.catalog.resources, resources)
 	goneTemplates := missingSet(p.catalog.templates, templates)
@@ -236,10 +319,11 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 		p.server.AddPrompt(pr.prompt, p.promptHandler(pr.up))
 	}
 	p.registerHoneypots(cfg)
+	p.registerDecoy(cfg)
 
 	p.log.Info("catalog refreshed",
 		"tools", len(tools), "resources", len(resources), "prompts", len(prompts),
-		"upstreams", len(p.upstreams))
+		"upstreams", len(p.upstreams), "quarantined", len(held))
 	if len(errs) > 0 {
 		return joinErrors(errs)
 	}

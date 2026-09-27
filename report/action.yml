@@ -1,0 +1,54 @@
+name: agentgate report
+description: Summarise what an agent did through agentgate in this job, prove the audit log is intact, and fail on what should never happen.
+author: Bünyamin Ulupinar
+branding:
+  icon: file-text
+  color: gray-dark
+
+inputs:
+  config:
+    description: The agentgate.yaml the agent ran with.
+    required: true
+  since:
+    description: How far back to report, e.g. 1h. Empty reports everything in the audit log.
+    default: 6h
+  fail-on:
+    description: Thresholds that fail the job, as agentgate stats --fail-on takes them. Empty never fails.
+    default: canary>0,honeypot>0,quarantine>0
+  verify:
+    description: Verify the audit log's hash chain, true or false.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        SINCE: ${{ inputs.since }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        VERIFY: ${{ inputs.verify }}
+      run: |
+        set -uo pipefail
+        status=0
+        {
+          agentgate stats --markdown --since "$SINCE" -c "$CONFIG" || true
+          if [ "$VERIFY" = "true" ]; then
+            echo
+            echo '```'
+            agentgate verify --missing-ok -c "$CONFIG"
+            v=$?
+            echo '```'
+            [ $v -ne 0 ] && status=1
+          fi
+        } >> "$GITHUB_STEP_SUMMARY" 2>&1
+        if [ -n "$FAIL_ON" ]; then
+          if ! agentgate stats --since "$SINCE" --fail-on "$FAIL_ON" -c "$CONFIG" > /dev/null; then
+            echo "::error::agentgate: a threshold was crossed ($FAIL_ON); see the job summary"
+            status=1
+          fi
+        fi
+        if [ $status -ne 0 ] && [ "$VERIFY" = "true" ]; then
+          agentgate verify --missing-ok -c "$CONFIG" > /dev/null || echo "::error::agentgate: the audit log's hash chain is broken"
+        fi
+        exit $status

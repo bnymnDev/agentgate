@@ -7,6 +7,7 @@
 package ui
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -19,6 +20,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
+	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
 	"github.com/bnymnDev/agentgate/internal/proxy"
 )
@@ -37,6 +39,14 @@ type Approvals interface {
 	Resolve(id string, choice proxy.Choice, who string) bool
 }
 
+// ToolSource is the proxy's view of the tools on offer and their standing
+// with the lockfile. Nil means no proxy is running behind the UI; the tools
+// page then reads the lockfile.
+type ToolSource interface {
+	ToolReports() []proxy.ToolReport
+	Trust(ctx context.Context, tool string) ([]proxy.ToolReport, error)
+}
+
 // Options configure the UI server.
 type Options struct {
 	Store *audit.Store
@@ -51,8 +61,10 @@ type Options struct {
 	// buttons.
 	Freeze   func(reason, by string) error
 	Unfreeze func() error
-	Logger   *slog.Logger
-	Version  string
+	// Tools shows and trusts tools; nil when no proxy runs behind the UI.
+	Tools   ToolSource
+	Logger  *slog.Logger
+	Version string
 }
 
 // Server renders the UI.
@@ -73,7 +85,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{opts: opts, log: opts.Logger, tmpl: map[string]*template.Template{}}
 	// Every page is parsed together with the layout, which is how html/template
 	// wants overriding blocks to be set up.
-	for _, page := range []string{"sessions", "session", "call", "policy", "approvals"} {
+	for _, page := range []string{"sessions", "session", "call", "policy", "approvals", "live", "tools"} {
 		t, err := template.New("layout.html").Funcs(funcs()).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html")
 		if err != nil {
@@ -100,6 +112,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /approvals", s.handleApprovals)
 	mux.HandleFunc("GET /partials/approvals", s.handleApprovalsPartial)
 	mux.HandleFunc("POST /approvals/{id}/{verb}", s.handleApprovalDecide)
+	mux.HandleFunc("GET /live", s.handleLive)
+	mux.HandleFunc("GET /partials/live", s.handleLivePartial)
+	mux.HandleFunc("GET /tools", s.handleTools)
+	mux.HandleFunc("POST /tools/trust", s.handleTrust)
 	mux.HandleFunc("POST /freeze", s.handleFreeze)
 	mux.HandleFunc("POST /unfreeze", s.handleUnfreeze)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -202,8 +218,12 @@ func funcs() template.FuncMap {
 				return fmt.Sprint(n)
 			}
 		},
-		"pretty":     pretty,
-		"isHoneypot": func(ruleID string) bool { return ruleID == policy.RuleHoneypot },
+		"pretty":       pretty,
+		"isHoneypot":   func(ruleID string) bool { return ruleID == policy.RuleHoneypot },
+		"isCanary":     func(ruleID string) bool { return ruleID == policy.RuleCanary },
+		"isQuarantine": func(ruleID string) bool { return ruleID == policy.RuleQuarantine },
+		"reveal":       pinning.Reveal,
+		"join":         strings.Join,
 	}
 }
 

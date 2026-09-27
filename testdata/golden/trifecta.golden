@@ -1,0 +1,22 @@
+ 0  allow  web__fetch                      -                             default allow
+ 1  allow  mail__send_email                -                             default allow
+ 2  ask    mail__send_email                lethal-trifecta/egress-after-untrusted  this session has read untrusted content; anything that can send data out now needs a human
+ 3  ask    web__fetch                      lethal-trifecta/egress-after-untrusted  this session has read untrusted content; anything that can send data out now needs a human
+ 4  allow  fs__read_file                   -                             default allow
+ 5  ask    shell__exec                     lethal-trifecta/shell-egress-after-untrusted  this session has read untrusted content; network commands now need a human
+ 6  allow  shell__exec                     -                             default allow
+ 7  ask    mail__send_email                lethal-trifecta/trifecta      this session read untrusted content and private data; it could be leaking one through the other
+ 8  deny   fs__write_file                  ci-host-is-read-only          the CI agent only reads
+ 9  allow  fs__read_file                   -                             default allow
+10  allow  fs__write_file                  -                             default allow
+11  ask    shell__deploy                   no-deploy-after-prod-shell    this session already ran commands against prod
+12  ask    shell__deploy                   must-run-tests-first          deploy without having run the tests in this session
+13  allow  shell__deploy                   -                             default allow
+14  ask    shell__deploy                   must-run-tests-first          deploy without having run the tests in this session
+15  ask    fs__read_file                   slow-down-long-sessions       200 calls in one session; a human should look
+16  ask    git__merge                      review-before-merge           nothing in this session has been reviewed yet
+17  allow  git__merge                      -                             default allow
+18  allow  mail__send_email                -                             default allow
+19  deny   mail__send_email                lethal-trifecta/injected-egress  suspected prompt injection: a tool result this session read carried hidden text or instructions aimed at the model, so nothing leaves the session now
+20  allow  fs__read_file                   -                             default allow
+21  ask    web__fetch                      lethal-trifecta/trifecta-canary  this session read untrusted content and a planted credential; it could be leaking one through the other

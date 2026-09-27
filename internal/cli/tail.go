@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
@@ -46,18 +49,12 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 			defer closeStore(store)
 
 			out := cmd.OutOrStdout()
-			var useColour bool
-			switch colour {
-			case "always":
-				useColour = true
-			case "never":
-				useColour = false
-			case "auto":
-				useColour = isatty.IsTerminal(os.Stdout.Fd()) && os.Getenv("NO_COLOR") == ""
-			default:
-				return fmt.Errorf("--color: want auto, always or never, got %q", colour)
+			useColour, err := colourFlag(colour)
+			if err != nil {
+				return err
 			}
-			w := &lineWriter{out: out, colour: useColour && !asJSON, args: showArgs, json: asJSON}
+			w := &lineWriter{out: out, colour: useColour && !asJSON, args: showArgs, json: asJSON,
+				width: terminalWidth(), toolWidth: 20}
 
 			sessionID := ""
 			if session != "" {
@@ -68,22 +65,28 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 				sessionID = sess.ID
 			}
 
-			// Start with the most recent few, so the screen is not empty.
-			recent, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, Limit: 100000})
+			// Start with the most recent few, so the screen is not empty, up
+			// to the head of the chain the follow loop starts from.
+			head, err := store.Head(cmd.Context())
 			if err != nil {
 				return err
 			}
-			if last > 0 && len(recent) > last {
-				recent = recent[len(recent)-last:]
+			recent, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, Newest: true, Limit: max(last, 1)})
+			if err != nil {
+				return err
 			}
-			lastID := ""
-			for _, c := range recent {
-				w.write(c)
-				lastID = c.ID
+			if last <= 0 {
+				recent = nil
 			}
-			if len(recent) > 0 && lastID < recent[len(recent)-1].ID {
-				lastID = recent[len(recent)-1].ID
+			for i := len(recent) - 1; i >= 0; i-- {
+				if recent[i].Seq > head.Seq {
+					continue // the follow loop prints it
+				}
+				w.write(recent[i])
 			}
+			// Follow the chain: every call recorded from here on, in the order
+			// it was recorded, including slow ones that started earlier.
+			lastSeq := head.Seq
 			if noFollow {
 				return nil
 			}
@@ -103,13 +106,13 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 					return nil
 				case <-ticker.C:
 				}
-				fresh, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, AfterID: lastID, Limit: 1000})
+				fresh, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, SeqAfter: &lastSeq, Limit: 1000})
 				if err != nil {
 					return err
 				}
 				for _, c := range fresh {
 					w.write(c)
-					lastID = c.ID
+					lastSeq = max(lastSeq, c.Seq)
 				}
 				if now := killswitch.Engaged(cfg.FreezeFile()); now != frozen && !asJSON {
 					frozen = now
@@ -131,6 +134,21 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 	return cmd
 }
 
+// colourFlag resolves a --color flag: auto means when stdout is a terminal
+// and NO_COLOR is not set.
+func colourFlag(mode string) (bool, error) {
+	switch mode {
+	case "always":
+		return true, nil
+	case "never":
+		return false, nil
+	case "auto":
+		return isatty.IsTerminal(os.Stdout.Fd()) && os.Getenv("NO_COLOR") == "", nil
+	default:
+		return false, fmt.Errorf("--color: want auto, always or never, got %q", mode)
+	}
+}
+
 const (
 	colourReset  = "\033[0m"
 	colourDim    = "\033[2m"
@@ -146,6 +164,25 @@ type lineWriter struct {
 	colour bool
 	args   bool
 	json   bool
+	// width is the terminal's, or 0 when it is not known; a line is cut to
+	// fit it.
+	width int
+	// toolWidth is the tool column's, which grows to fit the longest name.
+	toolWidth int
+}
+
+// terminalWidth is the width of the terminal stdout is, or else $COLUMNS, or
+// else 0.
+func terminalWidth() int {
+	if fd := int(os.Stdout.Fd()); term.IsTerminal(fd) {
+		if w, _, err := term.GetSize(fd); err == nil && w > 0 {
+			return w
+		}
+	}
+	if w, err := strconv.Atoi(os.Getenv("COLUMNS")); err == nil && w > 0 {
+		return w
+	}
+	return 0
 }
 
 func (w *lineWriter) paint(code, s string) string {
@@ -166,6 +203,10 @@ func (w *lineWriter) write(c *audit.Call) {
 	switch {
 	case c.RuleID == policy.RuleHoneypot:
 		badge = w.paint(colourRed, "TRAP   ")
+	case c.RuleID == policy.RuleCanary:
+		badge = w.paint(colourRed, "CANARY ")
+	case c.RuleID == policy.RuleQuarantine:
+		badge = w.paint(colourRed, "HELD   ")
 	case c.Shadow:
 		badge = w.paint(colourPurple, "SHADOW ")
 	case c.Decision == policy.ActionDeny:
@@ -184,13 +225,37 @@ func (w *lineWriter) write(c *audit.Call) {
 	if c.Shadow {
 		detail = "would have " + pastTense(c.Decision) + ": " + c.Reason
 	}
-	if detail != "" {
-		detail = w.dim(truncate(detail, 70))
+	tool := truncate(c.Tool, 48)
+	w.toolWidth = max(w.toolWidth, utf8.RuneCountInString(tool))
+	tool += strings.Repeat(" ", w.toolWidth-utf8.RuneCountInString(tool))
+	ms := fmt.Sprintf("%6dms", c.DurationMS)
+	// What is left of the line for the detail: the time, the badge, the tool
+	// and the duration come first.
+	room := 70
+	if w.width > 0 {
+		room = max(w.width-(8+2+7+1+w.toolWidth+1+len(ms)+2), 16)
 	}
-	line := fmt.Sprintf("%s  %s %-32s %6dms  %s",
-		w.dim(c.TS.Local().Format("15:04:05")), badge, w.paint(colourCyan, truncate(c.Tool, 32)), c.DurationMS, detail)
+	if len(c.Labels) > 0 {
+		// What the session learned with this call matters more than the
+		// default reason it was allowed for.
+		earned := "+" + strings.Join(c.Labels, " +")
+		if c.RuleID == "" {
+			detail = earned
+		} else {
+			detail = earned + "  " + detail
+		}
+		detail = w.paint(colourPurple, truncate(detail, room))
+	} else if detail != "" {
+		detail = w.dim(truncate(detail, room))
+	}
+	line := fmt.Sprintf("%s  %s %s %s  %s",
+		w.dim(c.TS.Local().Format("15:04:05")), badge, w.paint(colourCyan, tool), ms, detail)
 	if w.args && len(c.Args) > 0 {
-		line += "\n           " + w.dim(truncate(string(c.Args), 160))
+		argRoom := 160
+		if w.width > 0 {
+			argRoom = max(w.width-11, 16)
+		}
+		line += "\n           " + w.dim(truncate(string(c.Args), argRoom))
 	}
 	fmt.Fprintln(w.out, strings.TrimRight(line, " "))
 }

@@ -3,6 +3,7 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Compile validates the policy and precompiles every pattern and regex it
@@ -75,6 +76,37 @@ func (p *Policy) Compile() error {
 		for j := range r.When {
 			if err := r.When[j].compile(); err != nil {
 				errs = append(errs, fmt.Errorf("%s: when: %w", where, err))
+				continue
+			}
+			if r.When[j].sel.root == "result" {
+				errs = append(errs, fmt.Errorf("%s: when: %s is only known after the call has run; use it in a label rule and match the label here", where, r.When[j].Path))
+			}
+		}
+	}
+	p.labelsReadResult = false
+	for i, lr := range p.Labels {
+		where := fmt.Sprintf("policy.labels[%d]", i)
+		if lr.Pack != "" {
+			where = fmt.Sprintf("pack %s: labels[%d]", lr.Pack, i)
+		}
+		if !ValidLabel(lr.Label) {
+			errs = append(errs, fmt.Errorf("%s: label %q must be lower-case letters, digits, - or _", where, lr.Label))
+		}
+		pat, err := compilePattern(lr.Tool)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("%s: %w", where, err))
+		}
+		lr.tool = pat
+		if lr.Tool == "" && len(lr.When) == 0 {
+			errs = append(errs, fmt.Errorf("%s: label rule has neither tool nor when and would label every session; say tool: \"*\" if that is intended", where))
+		}
+		for j := range lr.When {
+			if err := lr.When[j].compile(); err != nil {
+				errs = append(errs, fmt.Errorf("%s: when: %w", where, err))
+				continue
+			}
+			if lr.When[j].sel.root == "result" {
+				p.labelsReadResult = true
 			}
 		}
 	}
@@ -97,6 +129,13 @@ func (p *Policy) Summary() string {
 	}
 	out := fmt.Sprintf("default %s, %d rules (%d allow, %d deny, %d ask)",
 		p.Default, len(p.Rules), allows, denies, asks)
+	if n := len(p.Packs); n > 0 {
+		names := make([]string, 0, n)
+		for _, ref := range p.Packs {
+			names = append(names, ref.Name)
+		}
+		out += ", packs " + strings.Join(names, ", ")
+	}
 	if p.IsShadow() {
 		out += ", shadow mode"
 	}

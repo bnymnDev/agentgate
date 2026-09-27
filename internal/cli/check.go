@@ -10,6 +10,7 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/policytest"
 )
 
 func newCheckCmd(g *globals) *cobra.Command {
@@ -20,6 +21,10 @@ func newCheckCmd(g *globals) *cobra.Command {
 		counts   int
 		at       string
 		repeats  int
+		host     string
+		labels   []string
+		called   []string
+		hints    map[string]string
 	)
 	cmd := &cobra.Command{
 		Use:   "check",
@@ -27,6 +32,11 @@ func newCheckCmd(g *globals) *cobra.Command {
 		Long: `Ask the policy what it would do with a call, without connecting to anything.
 
 	agentgate check --tool db.query --args '{"sql":"DROP TABLE users"}'
+
+Rules that look at the session or the host can be tested by describing them:
+
+	agentgate check --tool mail.send --label untrusted-input --label private-data
+	agentgate check --tool shell.deploy --called shell.test --host ci-bot
 
 Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`,
 		Args: cobra.NoArgs,
@@ -50,16 +60,34 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 				}
 				when = parsed
 			}
-			upstream, name, _ := cfg.SplitTool(tool)
-			call := &policy.Call{
-				Tool:     tool,
-				Upstream: upstream,
-				ToolName: name,
-				Args:     args,
-				Counts:   policy.Counts{Session: counts, Tool: counts, Repeats: repeats},
-				At:       when,
-				Frozen:   killswitch.Engaged(cfg.FreezeFile()),
+			exposed, upstream, name := cfg.ResolveTool(tool)
+			annotations, err := parseHints(hints)
+			if err != nil {
+				return err
 			}
+			call := &policy.Call{
+				Tool:        exposed,
+				Upstream:    upstream,
+				ToolName:    name,
+				Args:        args,
+				Counts:      policy.Counts{Session: counts, Tool: counts, Repeats: repeats},
+				At:          when,
+				Frozen:      killswitch.Engaged(cfg.FreezeFile()),
+				Annotations: annotations,
+			}
+			call.Host.Name, call.Host.Version, _ = strings.Cut(host, "/")
+			for _, l := range labels {
+				if !policy.ValidLabel(l) {
+					return fmt.Errorf("--label %q: labels are lower-case letters, digits, - and _", l)
+				}
+			}
+			var track policy.Tracker
+			track.Earn(labels...)
+			for _, c := range called {
+				exposed, up, nm := cfg.ResolveTool(c)
+				track.Forwarded(&policy.Call{Tool: exposed, Upstream: up, ToolName: nm}, 0, when)
+			}
+			call.Session = track.History()
 			decision := policy.Evaluate(&cfg.Policy, call)
 			shadow := cfg.Policy.IsShadow() && decision.Action != policy.ActionAllow
 
@@ -76,6 +104,9 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 				fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "tool", tool)
 				if upstream != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s (as %s)\n", "upstream", upstream, name)
+					if u := cfg.Upstream(upstream); u != nil && !u.Offers(name) {
+						fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "offered", "no — hidden by the upstream's tools: list, so the host never sees it")
+					}
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "decision", strings.ToUpper(string(decision.Action)))
 				fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "reason", decision.Reason)
@@ -102,7 +133,43 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 	cmd.Flags().IntVar(&counts, "calls-so-far", 0, "pretend this many calls were already made, to test budgets")
 	cmd.Flags().IntVar(&repeats, "repeats", 0, "pretend the identical call was just made this many times, to test the loop guard")
 	cmd.Flags().StringVar(&at, "at", "", "evaluate as if the call were made at this time, e.g. \"2026-09-04 16:30\" or \"friday 17:00\", to test time rules")
+	cmd.Flags().StringVar(&host, "host", "", "the host that opened the session, as name or name/version, to test host.* rules")
+	cmd.Flags().StringArrayVar(&labels, "label", nil, "a label the session already carries (repeatable)")
+	cmd.Flags().StringArrayVar(&called, "called", nil, "a tool the session already called, as upstream.tool (repeatable)")
+	cmd.Flags().StringToStringVar(&hints, "annotations", nil, "what the server says about the tool, e.g. read_only=true,destructive=false")
 	return cmd
+}
+
+// parseHints turns --annotations into the policy's view of a tool's hints.
+func parseHints(hints map[string]string) (policy.Annotations, error) {
+	var a policy.Annotations
+	for k, v := range hints {
+		if k == "title" {
+			a.Title = v
+			continue
+		}
+		var b bool
+		switch strings.ToLower(v) {
+		case "true", "yes", "1":
+			b = true
+		case "false", "no", "0":
+		default:
+			return a, fmt.Errorf("--annotations %s=%s: want true or false", k, v)
+		}
+		switch k {
+		case "read_only":
+			a.ReadOnly = &b
+		case "destructive":
+			a.Destructive = &b
+		case "idempotent":
+			a.Idempotent = &b
+		case "open_world":
+			a.OpenWorld = &b
+		default:
+			return a, fmt.Errorf("--annotations: unknown hint %q, use read_only, destructive, idempotent, open_world or title", k)
+		}
+	}
+	return a, nil
 }
 
 // errExitDenied makes `agentgate check` fail when the call would be denied,
@@ -128,32 +195,11 @@ func parseArgs(raw string) (map[string]any, error) {
 
 func exampleTool(sep string) string { return "fs" + sep + "write_file" }
 
-// parseWhen understands a few spellings of a point in time: RFC3339, a date
-// with a time, a time alone (today), or a weekday with a time (the coming one).
+// parseWhen reads --at; see policytest.ParseWhen for what it understands.
 func parseWhen(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02"} {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
-			return t, nil
-		}
+	t, err := policytest.ParseWhen(s, time.Now())
+	if err != nil {
+		return t, fmt.Errorf("--at: %w", err)
 	}
-	now := time.Now()
-	if t, err := time.ParseInLocation("15:04", s, time.Local); err == nil {
-		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, time.Local), nil
-	}
-	fields := strings.Fields(strings.ToLower(s))
-	if len(fields) == 2 {
-		for d := time.Sunday; d <= time.Saturday; d++ {
-			if strings.HasPrefix(strings.ToLower(d.String()), fields[0]) {
-				clock, err := time.ParseInLocation("15:04", fields[1], time.Local)
-				if err != nil {
-					break
-				}
-				days := (int(d) - int(now.Weekday()) + 7) % 7
-				day := now.AddDate(0, 0, days)
-				return time.Date(day.Year(), day.Month(), day.Day(), clock.Hour(), clock.Minute(), 0, 0, time.Local), nil
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("--at: cannot parse %q; use RFC3339, \"2006-01-02 15:04\", \"15:04\" or \"friday 17:00\"", s)
+	return t, nil
 }

@@ -1,6 +1,8 @@
 # The policy language
 
-A policy is a default, a mode, some hard stops, and an ordered list of rules.
+A policy is a default, a mode, some hard stops, an ordered list of rules —
+yours, then the packs you switch on — and the labels a session picks up on
+its way.
 
 ```yaml
 policy:
@@ -29,12 +31,17 @@ Evaluation happens in this order, and stops at the first thing that decides:
 1. **The kill switch.** A frozen gateway denies everything (`agentgate freeze`).
 2. **The loop guard.** The identical call repeated too often is denied.
 3. **Budgets.** A budget is a hard cap; no rule can lift one.
-4. **Rules**, top to bottom. The first one that matches wins.
+4. **Rules**, top to bottom — your own first, then the rules of each
+   [pack](#packs) in the order the packs are listed. The first one that
+   matches wins.
 5. **The default.**
 
 Decisions from steps 1–3 carry the fixed rule ids `frozen`, `loop-guard` and
-`budget`, so they can be told apart in the audit log. Honeypot trips (rule id
-`honeypot`) never reach the evaluator at all; see [guardrails.md](guardrails.md).
+`budget`, so they can be told apart in the audit log. Three things never reach
+the evaluator at all, because they are not a policy question: a call to a
+honeypot (rule id `honeypot`), a call that carries a canary out (`canary`), and
+a call to a tool pinning has quarantined (`quarantine`). See
+[guardrails.md](guardrails.md).
 
 `mode: shadow` changes what is *done* with a decision, not the decision: it is
 recorded as reached, and the call is forwarded anyway.
@@ -98,8 +105,15 @@ when:
 | `tool` | the exposed tool name, `fs__write_file` |
 | `tool_name` | the name the upstream uses, `write_file` |
 | `upstream` | the upstream name, `fs` |
+| `"args.{command,cmd}"` | whichever of several members exist — see [alternation](#one-of-several-members) |
 | `annotations.destructive` | what the server says about the tool; also `read_only`, `idempotent`, `open_world`, `title` |
 | `time.hour` | when the call is made, local time, 0–23; also `time.minute` and `time.weekday` (`"monday"`…`"sunday"`) |
+| `host.name` | the MCP host that opened the session, as it introduced itself (`claude-code`, `cursor`…); also `host.version` |
+| `session.label.<name>` | whether the session carries a [label](#session-labels): `true` or `false`, never missing |
+| `session.labels` | every label the session carries |
+| `session.called` | every tool the session has already called, in both spellings (`shell__test` and `shell.test`) |
+| `session.calls` | how many calls the session has made so far |
+| `result.is_error`, `result.text` | what the tool returned — in [label rules](#session-labels) only, since a result exists only once the call has run |
 
 Anything else is a validation error, so a typo in a path fails
 `policy validate` rather than quietly never matching.
@@ -148,11 +162,14 @@ Friday.
 | `equals` | the value is exactly this | <code>args.dryRun: { equals: false }</code> |
 | `not_equals` | the value is anything but this | <code>args.mode: { not_equals: "dry" }</code> |
 | `regex` | the value matches this Go regular expression | <code>args.command: { regex: '\brm\s+-rf' }</code> |
+| `not_regex` | the value does not match this regular expression | <code>args.sql: { not_regex: '(?i)\bwhere\b' }</code> |
 | `prefix` | the value starts with this string | <code>args.path: { prefix: "/etc/" }</code> |
 | `not_prefix` | the value does not start with this string | <code>args.path: { not_prefix: "/srv/app/" }</code> |
 | `in` | the value is one of these | <code>args.env: { in: ["prod", "staging"] }</code> |
 | `gt`, `lt` | the value is a number above / below this; both may be combined | <code>args.amount: { gt: 10, lt: 100 }</code> |
 | `exists` | the path is present (`true`) or absent (`false`) | <code>args.dryRun: { exists: false }</code> |
+| `includes` | one of the values — or one item of a list among them — is exactly this | <code>session.labels: { includes: private-data }</code> |
+| `excludes` | no value, and no item of a list among them, is this; also holds when there is none | <code>session.called: { excludes: shell.test }</code> |
 <!-- END:matchers -->
 
 Two shorthands save a level of nesting:
@@ -205,6 +222,191 @@ denies the batch as soon as a single item points outside the directory.
 Requiring every item to match would let the batch through because one entry in
 it happened to be fine.
 
+The same reading makes a wildcard dangerous in an **allow** rule: one item
+inside the directory would let the whole batch through. Fence values in with
+deny rules and the `not_*` matchers; `agentgate policy lint` points out an
+allow rule that relies on a wildcard.
+
+### Two conditions on one path
+
+A mapping cannot hold the same key twice, so `when` also takes a list of
+mappings. All of them still have to hold:
+
+```yaml
+- id: absolute-path-outside-the-repo
+  tool: "fs.write_file"
+  when:
+    - args.path: { prefix: "/" }
+    - args.path: { not_prefix: "/home/me/repo/" }
+  action: deny
+```
+
+### One of several members
+
+Servers do not agree on what to call things: the command is `command` in one
+shell server and `cmd` in the next. Braces list the alternatives, and the
+condition holds when any of the members that exist matches:
+
+```yaml
+when:
+  "args.{command,cmd,script}": { regex: '\bcurl\b.*\|\s*sh\b' }
+```
+
+Subscripts may follow the braces: `"args.{argv,args}[0]"`.
+
+### Lists: `includes` and `excludes`
+
+Every other matcher asks whether *some* value matches. For a question about a
+whole list that is the wrong question: `session.called: { not_equals:
+shell.test }` holds as soon as the session has called anything else. `includes`
+and `excludes` look at all the values at once, open up any list among them, and
+ask whether one item is there:
+
+```yaml
+- id: tests-before-deploy
+  tool: "shell.deploy"
+  when:
+    session.called: { excludes: shell.test }    # also true when nothing was called
+  action: ask
+  reason: "deploy without having run the tests in this session"
+```
+
+`excludes` is the one matcher besides `exists: false` that holds on a missing
+path: a session that has called nothing has not called the tests either.
+
+## Session labels
+
+A label is a fact a session picks up on its way: *this session has read a web
+page*, *this session has touched production*. Label rules attach them; rules
+ask about them.
+
+```yaml
+policy:
+  labels:
+    - label: touched-prod
+      tool: "shell.*"
+      when:
+        args.command: { regex: '\bprod\b' }
+    - label: tests-passed
+      tool: "shell.test"
+      when:
+        result.is_error: false              # label rules may look at the result
+  rules:
+    - id: deploy-only-after-green-tests
+      tool: "shell.deploy"
+      when:
+        session.label.tests-passed: false
+      action: deny
+      reason: "run the tests, and make them pass, before deploying"
+```
+
+A label rule matches like a rule — a tool pattern and conditions — but has no
+action. It is applied **after** a call has gone through, so a label describes
+what the session *did*, never what it only tried; that is also why a label rule
+may use `result.is_error` and `result.text` and a rule may not. Labels are per
+session, never shared between sessions, and the audit log records which call
+earned which one.
+
+agentgate attaches two labels itself, and they can be used like any other:
+
+| Label | When |
+|---|---|
+| `injection-suspected` | a tool result carried text hidden in invisible characters, or instructions addressed to the model |
+| `canary-read` | a tool result contained a [canary](guardrails.md#canaries) |
+
+Label names are lower-case letters, digits, `-` and `_`. A condition on a label
+no rule attaches never changes, and `agentgate policy lint` says so.
+
+## Packs
+
+A pack is a named, reviewed set of rules and label rules. Switch one on by name:
+
+```yaml
+policy:
+  packs:
+    - baseline
+    - secrets
+    - lethal-trifecta
+    - name: filesystem
+      with: { workspace: /home/me/repo }
+```
+
+or from the command line, which edits only the lines of the list:
+
+```sh
+agentgate policy packs                                     # what ships
+agentgate policy pack lethal-trifecta                      # read one in full
+agentgate policy add filesystem --with workspace=~/code/app
+agentgate policy remove business-hours
+```
+
+**Your rules come first.** Pack rules are evaluated after your own rules, so a
+pack can be switched on wholesale and still be overruled for one tool:
+
+```yaml
+policy:
+  packs: [baseline]
+  rules:
+    - id: our-ci-may-reset
+      tool: "shell.exec"
+      when:
+        host.name: { equals: "ci-bot" }
+        args.command: { regex: '^git reset --hard' }
+      action: allow
+```
+
+A pack rule's id carries the pack's name — `baseline/rm-rf-root` — in the
+decision, the audit log and the stats. Label names are left alone, because
+labels are a vocabulary packs and your own rules share.
+
+**Parameters** are filled in on the parsed YAML, value by value, so a value can
+never change a pack's structure; a value that is a whole placeholder takes the
+type of what is put in (`lt: "{{last_hour}}"` becomes the number 17). A
+parameter marked as a path is expanded (`~`, `${ENV}`) and cleaned.
+
+**Your own packs** are files, named relative to the config:
+
+```yaml
+policy:
+  packs:
+    - ./packs/team.yaml
+```
+
+```yaml
+# packs/team.yaml
+name: team
+description: What the team agreed on.
+params:
+  branch:
+    description: the protected branch
+    default: main
+rules:
+  - id: no-push
+    tool: "*"
+    when:
+      args.branch: { equals: "{{branch}}" }
+    action: deny
+    reason: "{{branch}} is protected"
+```
+
+The packs that ship with agentgate:
+
+<!-- BEGIN:packs -->
+| Pack | Parameters | What it does |
+|---|---|---|
+| `ask-destructive` | — | Asks before any tool the server itself describes as destructive. Relies on the MCP tool annotations, so it covers exactly as much as the servers are honest about; tools without annotations are left to other rules. |
+| `baseline` | — | The commands no agent should run unsupervised: recursive deletes of roots and home directories, disk wipes, force-pushes to main, and SQL that drops or empties tables. It looks at the arguments shell, git and database tools actually take, so it works whatever the servers are called. |
+| `business-hours` | `first_hour`, `last_hour` | Outside working hours and at weekends, anything that changes something waits for a human who is awake to see it. Hours are the gateway's local time. |
+| `database` | — | Every write to a database waits for a human: INSERT, UPDATE, DELETE, MERGE, COPY FROM, and schema changes. SELECTs go through. Pair it with baseline, which denies the statements that destroy a table outright. |
+| `filesystem` | `workspace` (required) | Writes are confined to one directory. Any tool whose name says it writes, edits, moves, creates or deletes, and whose path argument is absolute and outside the workspace, is denied; so is a relative path that climbs out with "..". Paths are expected to be absolute, as the reference filesystem server uses them. |
+| `git-safety` | — | Git beyond baseline: pushes to main, pushed tags, deleted branches, history rewrites and global git configuration all wait for a human. |
+| `github` | — | For GitHub, GitLab and Gitea servers, by tool name: deleting a repository is denied; merging, writing to the default branch, changing settings and anything other people will see — issues, comments, pull requests, releases — waits for a human. Reads are left alone. |
+| `lethal-trifecta` | — | An agent that has read untrusted content, can reach private data and can send things out can be talked into leaking that data. This pack labels sessions that fetch web pages, issues or mail as untrusted-input, and from then on asks a human before the session sends anything anywhere. A session whose tool results carried hidden text or instructions aimed at the model (the injection-suspected label agentgate attaches itself) sends nothing at all. |
+| `read-only` | — | The agent may look but not touch. Tools the server marks read-only, and tools whose names say they only read — get, list, read, search and so on — are allowed; SQL that writes is denied even through a read-sounding tool; everything else is denied. Your own rules still come first, so you can carve out exceptions. |
+| `secrets` | — | Keeps key material out of reach — SSH and GPG keys, cloud and registry credentials, .netrc and friends — and labels sessions that read .env files with private-data, so that other rules (and the lethal-trifecta pack) can treat them with more care. |
+| `shell-strict` | — | A stricter shell on top of baseline: reverse shells, decode-and-run tricks and shutting the machine down are denied; sudo, system package installs and persistence in shell profiles, cron and services wait for a human. |
+<!-- END:packs -->
+
 ## Budgets
 
 ```yaml
@@ -252,8 +454,10 @@ tried against live traffic before it is trusted. See
 [guardrails.md](guardrails.md#shadow-mode).
 
 `redact_results: true` applies the audit redaction patterns to tool results
-before the agent reads them. It is the one place agentgate deliberately changes
-a result, and it is off by default. See
+before the agent reads them, and `strip_invisible: true` removes the characters
+that render as nothing — the way a web page hides instructions from the person
+reading it. They are the only two places agentgate deliberately changes a
+result, and both are off by default. See
 [guardrails.md](guardrails.md#result-redaction).
 
 ## `ask`
@@ -275,6 +479,10 @@ agentgate check --tool 'fs.write_file' --args '{"path":"/etc/passwd"}'
 agentgate check --tool 'fs.write_file' --args '{}' --calls-so-far 60   # test a budget
 agentgate check --tool 'shell.exec' --args '{}' --repeats 10           # test the loop guard
 agentgate check --tool 'deploy' --at 'friday 17:00'                    # test a time rule
+agentgate check --tool 'mail.send' --label untrusted-input --label private-data
+agentgate check --tool 'shell.deploy' --called shell.test --host ci-bot
+agentgate check --tool 'x' --annotations destructive=true              # test an annotation rule
+agentgate policy lint agentgate.yaml           # rules that never fire, allows that let too much through
 agentgate replay <session> --dry-run           # against a real recorded session
 ```
 
@@ -284,6 +492,130 @@ CI:
 ```sh
 agentgate check --tool 'shell.exec' --args '{"command":"rm -rf /"}' && echo "THIS SHOULD NOT HAPPEN"
 ```
+
+### Test files
+
+A policy worth having is worth a test. A test file holds calls, the session
+each is made in, and the decision each has to get; `agentgate test` runs them
+all and exits 1 when one fails. Without arguments it reads the file next to
+the config, with `.test` before the extension — `agentgate.test.yaml` for
+`agentgate.yaml`:
+
+```yaml
+tests:
+  - name: rm -rf / is denied
+    call: { tool: shell.exec, args: { command: "rm -rf /" } }
+    expect: deny
+
+  - name: merging waits for a human
+    call: { tool: github.merge_pull_request, args: { pull_number: 7 } }
+    expect: { action: ask, rule: github/merge }
+
+  - name: nothing leaves after a poisoned page
+    labels: [injection-suspected]                # the session already carries these
+    call: { tool: mail.send, args: { to: someone@example.com } }
+    expect: { action: deny, reason: "prompt injection" }
+
+  - name: deploys only after green tests
+    before:                                      # what the session did first
+      - tool: shell.test
+        result: { is_error: false }              # label rules may look at it
+    call: { tool: shell.deploy }
+    expect: allow
+
+  - name: fetching a page marks the session
+    call: { tool: web.fetch, args: { url: "https://example.com" } }
+    expect: { action: allow, labels: [untrusted-input] }
+
+  - name: the budget runs out
+    before:
+      - { tool: fs.write_file, args: { path: /home/me/repo/x }, repeat: 50 }
+    call: { tool: fs.write_file, args: { path: /home/me/repo/y } }
+    expect: { action: deny, rule: budget }
+
+  - name: no deploys on Friday afternoon
+    at: friday 17:00                             # else the tests run at the current time
+    host: ci-bot/2.1                             # for host.* conditions
+    call: { tool: shell.deploy, annotations: { destructive: false } }
+    expect: { action: deny, rule: no-deploys-on-friday-afternoon }
+```
+
+```
+$ agentgate test
+agentgate.test.yaml
+  PASS  rm -rf / is denied                    deny   baseline/rm-rf-root
+  PASS  merging waits for a human             ask    github/merge
+  PASS  nothing leaves after a poisoned page  deny   lethal-trifecta/injected-egress
+  PASS  deploys only after green tests        allow  default
+  PASS  fetching a page marks the session     allow  default
+  PASS  the budget runs out                   deny   budget
+  PASS  no deploys on Friday afternoon        deny   no-deploys-on-friday-afternoon
+
+7 passed, 0 failed
+```
+
+A failing test says what it wanted, what it got, and where it is:
+
+```
+  FAIL  merging waits for a human             want rule github/merge-pr, got github/merge
+        agentgate.test.yaml:6
+```
+
+Each test runs in a session of its own, through the same evaluator, session
+tracker and label rules the proxy uses. The calls in `before` are what the
+session did: a denied one does nothing, the others earn their labels — the
+labels agentgate attaches to a result itself included — and count towards the
+budgets and the loop guard; one the policy would ask about counts as
+approved. `repeat` makes a call several times. `expect` is an action, or a
+mapping with the `action`, the `rule` that has to decide, words the `reason`
+has to contain, and `labels` the session has to carry after the call.
+
+Tools are named as the host sees them (`shell__exec`) or as `upstream.tool`.
+`--run` picks tests by name, `--json` prints the outcomes, and
+`agentgate init` writes starter tests next to every config it creates. The
+[GitHub Action](integrations.md#ci-the-github-action) runs the tests next to
+the config it is given. Time rules see the local time of the machine that runs
+the tests, as they see the gateway's.
+
+### A whole session as a test
+
+A test can also be a session, call by call, where any call may carry what it
+has to get:
+
+```yaml
+  - name: browse, then try to mail it out
+    steps:
+      - tool: web.fetch
+        args: { url: "https://example.com/issues/42" }
+        expect: { action: allow, labels: [untrusted-input] }
+      - tool: fs.read_file
+        args: { path: /home/me/app/.env }
+      - tool: mail.send
+        args: { to: someone@example.com }
+        expect: { action: ask, rule: lethal-trifecta/trifecta }
+```
+
+`--from` writes one from a recorded session: every call it made, at the time
+it was made, expecting the decision the policy reached then. A good day of
+work becomes the regression suite, and a change to the policy fails it on
+exactly the calls the change would decide differently:
+
+```sh
+agentgate test --from 01JD7Z > good-day.test.yaml
+agentgate test agentgate.test.yaml good-day.test.yaml
+```
+
+```
+good-day.test.yaml
+  FAIL  session 01JD7Z4V1B, coding-agent 1.4.2, 2026-09-27 19:07  step 3 (shell__exec, line 22): want deny, got allow: default allow
+        good-day.test.yaml:7
+```
+
+Arguments and results are as the audit log holds them — redacted — and
+anything that does not print is written as an escape, so a test file never
+hides what its calls carry. Calls stopped by a honeypot, a canary, tool
+pinning or the kill switch are left out as comments: they were never the
+policy's to decide.
 
 The policy engine's own test suite is a set of golden files:
 `testdata/policies/*.yaml` plus `testdata/calls/*.json` produce

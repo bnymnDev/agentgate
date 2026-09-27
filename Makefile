@@ -77,10 +77,10 @@ vet:
 docs:
 	$(GO) run ./internal/gendocs
 
-## demo: render every docs/demo/*.txt transcript (real agentgate output) into a GIF next to it
+## demo: render every docs/demo/*.txt transcript (real agentgate output) into a GIF next to it, and the social preview
 demo:
 	@for t in docs/demo/*.txt; do $(GO) run ./internal/demogif -in $$t -out $${t%.txt}.gif; done
-	$(GO) run ./internal/demogif -card -in docs/demo/story.txt -out docs/brand/social-preview.png
+	$(GO) run ./internal/demogif -card -in docs/brand/card.txt -out docs/brand/social-preview.png
 
 ## release-snapshot: build release artifacts locally without publishing
 release-snapshot:

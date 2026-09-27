@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 )
 
 // Defaults that apply when the config file leaves a field out.
@@ -40,21 +42,73 @@ type Config struct {
 	Policy          policy.Policy `yaml:"policy"`
 	Honeypots       Honeypots     `yaml:"honeypots"`
 	Notify          Notify        `yaml:"notify"`
+	Pinning         Pinning       `yaml:"pinning"`
+	Canaries        Canaries      `yaml:"canaries"`
+	Telemetry       Telemetry     `yaml:"telemetry"`
 
 	// Path is the file the config was read from. It is not part of the file.
 	Path string `yaml:"-"`
 }
 
+// Telemetry exports agentgate's view of every call to an observability
+// backend.
+type Telemetry struct {
+	// OTLP sends a span per tool call over OTLP/HTTP (JSON). The standard
+	// OTEL_EXPORTER_OTLP_* and OTEL_SERVICE_NAME variables are honoured, and
+	// setting OTEL_EXPORTER_OTLP_ENDPOINT is enough to switch it on.
+	OTLP telemetry.Config `yaml:"otlp"`
+}
+
 // Approval configures what happens to calls a rule marked "ask".
 type Approval struct {
-	// Mode is auto, tty, ui or deny.
+	// Mode is auto, tty, ui, ntfy or deny.
 	//
-	//	auto  use the web UI when it is running, else the TTY, else deny
+	//	auto  ask on every channel that is available — the web UI when it is
+	//	      running, the terminal, the phone when ntfy is configured — and
+	//	      take the first answer; deny when there is none
 	//	tty   prompt on the agentgate terminal only
 	//	ui    wait for an approval in the web UI only
+	//	ntfy  ask on the phone only
 	//	deny  never ask, deny every "ask" decision
 	Mode    string   `yaml:"mode"`
 	Timeout Duration `yaml:"timeout"`
+	// Ntfy puts approvals on your phone through an ntfy server, with
+	// Allow / Allow for session / Deny buttons on the notification.
+	Ntfy *Ntfy `yaml:"ntfy"`
+}
+
+// Ntfy is an ntfy server and topic to put approvals on.
+type Ntfy struct {
+	// Server defaults to https://ntfy.sh.
+	Server string `yaml:"server"`
+	// Topic is where questions go; answers come back on <topic>-answers. On
+	// a public server the topic name is the password, so it must be long
+	// and random unless a token protects it.
+	Topic string `yaml:"topic"`
+	// Token is an access token for a server with access control.
+	Token string `yaml:"token"`
+}
+
+var ntfyTopicRe = regexp.MustCompile(`^[-_A-Za-z0-9]{1,64}$`)
+
+func (n *Ntfy) normalize() error {
+	var errs []error
+	n.Server = ExpandEnv(n.Server)
+	if n.Server == "" {
+		n.Server = "https://ntfy.sh"
+	}
+	if u, err := url.Parse(n.Server); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		errs = append(errs, fmt.Errorf("approval.ntfy.server: %q is not an http(s) URL", n.Server))
+	}
+	n.Topic = ExpandEnv(n.Topic)
+	n.Token = ExpandEnv(n.Token)
+	switch {
+	case !ntfyTopicRe.MatchString(n.Topic):
+		errs = append(errs, errors.New("approval.ntfy.topic: letters, digits, - and _ only, at most 64"))
+	case len(n.Topic) < 16 && n.Token == "":
+		errs = append(errs, errors.New("approval.ntfy.topic: anyone who knows the topic can read and answer the questions; use at least 16 random characters, or set a token"))
+	}
+	return errors.Join(errs...)
 }
 
 // Audit configures the SQLite audit store.
@@ -94,6 +148,82 @@ type Upstream struct {
 	// configured and to false for a single upstream.
 	Prefix  *bool    `yaml:"prefix"`
 	Timeout Duration `yaml:"timeout"`
+	// Tools limits what this upstream offers to the tools whose names, as
+	// the server gives them, match one of these globs; a pattern that starts
+	// with ! hides what it matches instead. A tool that is not offered cannot
+	// be called, and its description, which the model reads as
+	// instructions, never reaches the model. Empty offers every tool.
+	Tools []string `yaml:"tools"`
+
+	offer toolFilter
+}
+
+// toolFilter is the compiled form of Upstream.Tools.
+type toolFilter []toolPattern
+
+type toolPattern struct {
+	src  string
+	re   *regexp.Regexp
+	hide bool
+}
+
+func compileToolFilter(patterns []string) (toolFilter, error) {
+	var f toolFilter
+	for _, p := range patterns {
+		glob, hide := strings.CutPrefix(strings.TrimSpace(p), "!")
+		glob = strings.TrimSpace(glob)
+		if glob == "" {
+			return nil, fmt.Errorf("empty pattern %q", p)
+		}
+		re, err := policy.CompileGlob(glob)
+		if err != nil {
+			return nil, fmt.Errorf("pattern %q: %w", p, err)
+		}
+		f = append(f, toolPattern{src: p, re: re, hide: hide})
+	}
+	return f, nil
+}
+
+// Offers reports whether the upstream's tool of this name, as the server
+// names it, is offered to the agent: it matches a pattern, or there are only
+// ! patterns, and it matches no ! pattern.
+func (u *Upstream) Offers(tool string) bool {
+	included, onlyHides := false, true
+	for _, p := range u.offer {
+		switch {
+		case p.hide && p.re.MatchString(tool):
+			return false
+		case !p.hide:
+			onlyHides = false
+			included = included || p.re.MatchString(tool)
+		}
+	}
+	return included || onlyHides
+}
+
+// UnmatchedTools returns the Tools patterns that match none of names, the
+// tools the server offers: most likely, a misspelt tool.
+func (u *Upstream) UnmatchedTools(names []string) []string {
+	var out []string
+	for _, p := range u.offer {
+		matched := false
+		for _, n := range names {
+			if p.re.MatchString(n) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, p.src)
+		}
+	}
+	return out
+}
+
+// Unfiltered is the upstream with every tool offered.
+func (u Upstream) Unfiltered() Upstream {
+	u.Tools, u.offer = nil, nil
+	return u
 }
 
 // Transport reports how the upstream is reached.
@@ -110,15 +240,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg, err := Parse(raw)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	cfg.Path = abs
+	cfg, err := parse(raw, abs)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	return cfg, nil
 }
 
@@ -126,12 +255,20 @@ func Load(path string) (*Config, error) {
 // misspelled key is caught by "agentgate policy validate" rather than silently
 // ignored at run time.
 func Parse(raw []byte) (*Config, error) {
+	return parse(raw, "")
+}
+
+// parse decodes and validates config bytes read from path. The path is where
+// relative pack files and the lockfile are looked for; it may be empty for a
+// config that did not come from a file.
+func parse(raw []byte, path string) (*Config, error) {
 	var cfg Config
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
 		return nil, err
 	}
+	cfg.Path = path
 	if err := cfg.normalize(); err != nil {
 		return nil, err
 	}
@@ -155,8 +292,17 @@ func (c *Config) normalize() error {
 	}
 	switch c.Approval.Mode {
 	case "auto", "tty", "ui", "deny":
+	case "ntfy":
+		if c.Approval.Ntfy == nil {
+			errs = append(errs, errors.New("approval.mode is ntfy but approval.ntfy is not set"))
+		}
 	default:
-		errs = append(errs, fmt.Errorf("approval.mode: unknown mode %q, want auto, tty, ui or deny", c.Approval.Mode))
+		errs = append(errs, fmt.Errorf("approval.mode: unknown mode %q, want auto, tty, ui, ntfy or deny", c.Approval.Mode))
+	}
+	if c.Approval.Ntfy != nil {
+		if err := c.Approval.Ntfy.normalize(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if c.Approval.Timeout == 0 {
 		c.Approval.Timeout = Duration(DefaultApprovalTimeout)
@@ -232,8 +378,16 @@ func (c *Config) normalize() error {
 		if u.Prefix == nil {
 			u.Prefix = boolPtr(len(c.Upstreams) > 1)
 		}
+		if f, err := compileToolFilter(u.Tools); err != nil {
+			errs = append(errs, fmt.Errorf("%s: tools: %w", where, err))
+		} else {
+			u.offer = f
+		}
 	}
 
+	if err := c.expandPacks(); err != nil {
+		errs = append(errs, err)
+	}
 	if err := c.Policy.Compile(); err != nil {
 		errs = append(errs, err)
 	}
@@ -242,6 +396,16 @@ func (c *Config) normalize() error {
 	}
 	if err := c.Notify.normalize(); err != nil {
 		errs = append(errs, err)
+	}
+	if err := c.Pinning.normalize(c.Path); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Canaries.normalize(c.Audit.Path); err != nil {
+		errs = append(errs, err)
+	}
+	c.Telemetry.OTLP.Endpoint = ExpandEnv(c.Telemetry.OTLP.Endpoint)
+	for k, v := range c.Telemetry.OTLP.Headers {
+		c.Telemetry.OTLP.Headers[k] = ExpandEnv(v)
 	}
 	return errors.Join(errs...)
 }
@@ -264,6 +428,16 @@ func (c *Config) Prefixed(u *Upstream, tool string) string {
 	return u.Name + c.PrefixSeparator + tool
 }
 
+// Upstream returns the configured upstream with this name, or nil.
+func (c *Config) Upstream(name string) *Upstream {
+	for i := range c.Upstreams {
+		if c.Upstreams[i].Name == name {
+			return &c.Upstreams[i]
+		}
+	}
+	return nil
+}
+
 // SplitTool resolves an exposed tool name back to an upstream and the name the
 // upstream uses. It reports false when no configured upstream can own the name.
 func (c *Config) SplitTool(exposed string) (upstream string, tool string, ok bool) {
@@ -284,6 +458,19 @@ func (c *Config) SplitTool(exposed string) (upstream string, tool string, ok boo
 		}
 	}
 	return "", exposed, false
+}
+
+// ResolveTool reads a tool name the way a person writes one — as the host
+// sees it (fs__write_file) or as upstream.tool (fs.write_file) — and returns
+// the exposed name, the upstream and the upstream's own name for the tool.
+func (c *Config) ResolveTool(name string) (exposed, upstream, tool string) {
+	if u, t, ok := strings.Cut(name, "."); ok {
+		if up := c.Upstream(u); up != nil {
+			return c.Prefixed(up, t), u, t
+		}
+	}
+	upstream, tool, _ = c.SplitTool(name)
+	return name, upstream, tool
 }
 
 // Timeout returns the per-call timeout for an upstream.

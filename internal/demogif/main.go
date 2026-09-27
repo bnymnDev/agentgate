@@ -1,4 +1,5 @@
-// Command demogif renders docs/demo/transcript.txt into docs/demo.gif.
+// Command demogif renders a transcript from docs/demo into a GIF, or into the
+// social preview image with -card.
 //
 // The transcript is real agentgate output, captured from the binary; this
 // program only draws it the way a terminal would, with a typing animation for
@@ -451,7 +452,7 @@ func (r *renderer) writeCard(entries []entry, path string) error {
 	d.DrawString(gate)
 	// Tagline.
 	d = &font.Drawer{Dst: img, Face: mid, Src: &image.Uniform{cDim}}
-	tag := "firewall, kill switch and flight recorder for your AI agent's tools"
+	tag := "firewall, tripwires and flight recorder for your AI agent's tools"
 	d.Dot = fixed.P((w-d.MeasureString(tag).Ceil())/2, 205)
 	d.DrawString(tag)
 

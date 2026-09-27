@@ -1,0 +1,8 @@
+$ agentgate tail
+[2m── following /home/me/.agentgate/audit.db (ctrl-c to stop) ──[0m
+[2m18:36:03[0m  [32mallow  [0m [36mfs__read_file       [0m      1ms  [2mdefault allow[0m
+[2m18:36:04[0m  [32mallow  [0m [36mweb__fetch          [0m      2ms  [35m+injection-suspected +untrusted-input[0m
+[2m18:36:04[0m  [31;1mCANARY [0m [36mmail__send_message  [0m      0ms  [2mcanary: prod-aws leaving base64-encoded; it is a fake aws credential t…[0m
+[2m18:36:05[0m  [31;1mDENY   [0m [36mshell__exec         [0m      0ms  [2msuspected prompt injection: a tool result this session read carried hi…[0m
+[2m18:36:06[0m  [31;1mTRAP   [0m [36mdb__drop_all_tables [0m      0ms  [2mhoneypot: db__drop_all_tables does not exist. Calling it means the age…[0m
+[31;1mthe gateway is now FROZEN[0m

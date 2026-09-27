@@ -19,7 +19,10 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := testserver.New().Run(ctx, &mcp.StdioTransport{}); err != nil && ctx.Err() == nil {
+	err := testserver.New().Run(ctx, &mcp.StdioTransport{})
+	// The client closing stdin is how a stdio session ends; that is not an
+	// error.
+	if ctx.Err() == nil && !testserver.Ended(err) {
 		log.Fatalf("echo server: %v", err)
 	}
 }

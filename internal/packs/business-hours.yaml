@@ -1,0 +1,38 @@
+name: business-hours
+description: >-
+  Outside working hours and at weekends, anything that changes something waits
+  for a human who is awake to see it. Hours are the gateway's local time.
+params:
+  first_hour:
+    description: The first working hour, 0-23.
+    default: "8"
+  last_hour:
+    description: The last working hour, 0-23; work ends when it does.
+    default: "17"
+rules:
+  - id: weekend
+    tool: "*"
+    when:
+      time.weekday: { in: [saturday, sunday] }
+      tool_name:
+        regex: '(?i)(write|edit|create|update|delete|remove|move|rename|push|merge|deploy|release|publish|send|post|exec|run|execute|apply|drop|insert)'
+    action: ask
+    reason: "it is the weekend; changes wait for a human"
+
+  - id: before-hours
+    tool: "*"
+    when:
+      time.hour: { lt: "{{first_hour}}" }
+      tool_name:
+        regex: '(?i)(write|edit|create|update|delete|remove|move|rename|push|merge|deploy|release|publish|send|post|exec|run|execute|apply|drop|insert)'
+    action: ask
+    reason: "outside working hours; changes wait for a human"
+
+  - id: after-hours
+    tool: "*"
+    when:
+      time.hour: { gt: "{{last_hour}}" }
+      tool_name:
+        regex: '(?i)(write|edit|create|update|delete|remove|move|rename|push|merge|deploy|release|publish|send|post|exec|run|execute|apply|drop|insert)'
+    action: ask
+    reason: "outside working hours; changes wait for a human"

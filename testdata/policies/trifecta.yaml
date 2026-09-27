@@ -1,0 +1,56 @@
+# The lethal-trifecta pack with secrets, and rules on the host and the
+# session's history written by hand.
+version: 1
+upstreams:
+  - name: web
+    stdio: ["testdata/servers/echo"]
+  - name: fs
+    stdio: ["testdata/servers/echo"]
+  - name: mail
+    stdio: ["testdata/servers/echo"]
+  - name: shell
+    stdio: ["testdata/servers/echo"]
+  - name: git
+    stdio: ["testdata/servers/echo"]
+policy:
+  default: allow
+  packs: [lethal-trifecta, secrets]
+  labels:
+    - label: touched-prod
+      tool: "shell.*"
+      when:
+        args.command: { regex: '\bprod\b' }
+    - label: reviewed
+      tool: "git.diff"
+  rules:
+    - id: ci-host-is-read-only
+      tool: "*"
+      when:
+        host.name: { equals: "ci-bot" }
+        tool_name: { regex: '^(write|send|exec)' }
+      action: deny
+      reason: "the CI agent only reads"
+    - id: no-deploy-after-prod-shell
+      tool: "shell.deploy"
+      when:
+        session.label.touched-prod: true
+      action: ask
+      reason: "this session already ran commands against prod"
+    - id: must-run-tests-first
+      tool: "shell.deploy"
+      when:
+        session.called: { excludes: "shell.test" }
+      action: ask
+      reason: "deploy without having run the tests in this session"
+    - id: review-before-merge
+      tool: "git.merge"
+      when:
+        session.label.reviewed: false
+      action: ask
+      reason: "nothing in this session has been reviewed yet"
+    - id: slow-down-long-sessions
+      tool: "*"
+      when:
+        session.calls: { gt: 200 }
+      action: ask
+      reason: "200 calls in one session; a human should look"

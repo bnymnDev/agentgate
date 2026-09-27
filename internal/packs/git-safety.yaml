@@ -1,0 +1,44 @@
+name: git-safety
+description: >-
+  Git beyond baseline: pushes to main, pushed tags, deleted branches, history
+  rewrites and global git configuration all wait for a human.
+rules:
+  - id: push-main
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)\bgit\s+push\b[^;&|]*\b(main|master)\b'
+    action: ask
+    reason: "this pushes straight to main"
+
+  - id: push-tags
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)\bgit\s+push\b[^;&|]*(--tags|--follow-tags|refs/tags/)'
+    action: ask
+    reason: "pushed tags are hard to take back"
+
+  - id: delete-branch
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)\bgit\s+(branch\s+(-D|--delete\s+--force|-d\s+-f)|push\s+[^;&|]*(--delete|\s:[^\s;&|]+))'
+    action: ask
+    reason: "this deletes a branch"
+
+  - id: rewrite-history
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)\bgit\s+(filter-branch|filter-repo|reflog\s+(expire|delete)|update-ref\s+-d|replace\s|rebase\s+[^;&|]*\b(main|master)\b)'
+    action: ask
+    reason: "this rewrites history"
+
+  - id: global-config
+    tool: "*"
+    when:
+      "args.{command,cmd,script,code,input}":
+        regex: '(?i)\bgit\s+config\s+(--global|--system)\b'
+    action: ask
+    reason: "this changes git configuration outside the repository"

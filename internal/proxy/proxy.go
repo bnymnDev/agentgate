@@ -18,9 +18,12 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bnymnDev/agentgate/internal/audit"
+	"github.com/bnymnDev/agentgate/internal/canary"
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
+	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 )
 
 // Version is stamped into the implementation agentgate advertises. It is
@@ -29,11 +32,13 @@ var Version = "dev"
 
 // Proxy fronts one or more upstream MCP servers.
 type Proxy struct {
-	log      *slog.Logger
-	store    *audit.Store
-	redact   *audit.Redactor
-	approver Approver
-	notify   *notifier
+	log       *slog.Logger
+	store     *audit.Store
+	redact    *audit.Redactor
+	approver  Approver
+	notify    *notifier
+	canaries  *canary.Store
+	telemetry *telemetry.Exporter
 
 	// cfg is swapped wholesale on hot reload, so it is read under mu.
 	mu        sync.RWMutex
@@ -44,6 +49,13 @@ type Proxy struct {
 	server    *mcp.Server
 	catalog   catalog
 	refreshMu sync.Mutex
+
+	// pinMode, lock and lockStamp belong to tool pinning; lock is read and
+	// written under lockMu.
+	pinMode   PinningMode
+	lockMu    sync.Mutex
+	lock      *pinning.Lockfile
+	lockStamp fileStamp
 
 	sessions sync.Map // *mcp.ServerSession -> *sessionState
 
@@ -64,6 +76,11 @@ type Options struct {
 	Approver Approver
 	// DownstreamTransport is recorded with the session ("stdio" or "http").
 	DownstreamTransport string
+	// Pinning says what the proxy may do with the lockfile. The zero value
+	// follows the config.
+	Pinning PinningMode
+	// Telemetry receives a span for every call. Nil exports nothing.
+	Telemetry *telemetry.Exporter
 }
 
 // sessionState is what agentgate tracks per downstream connection. The call
@@ -77,18 +94,8 @@ type sessionState struct {
 	hostVersion string
 
 	mu       sync.Mutex
-	calls    int
-	perTool  map[string]int
+	track    policy.Tracker
 	finished bool
-	// recent holds the times of allowed calls in the trailing minute, for the
-	// rate limit.
-	recent []time.Time
-	// lastSig and streak drive the loop guard: how many times in a row the
-	// identical call (tool plus argument hash) has just been made.
-	lastSig string
-	streak  int
-	// tokens is the estimated token volume pushed through tools so far.
-	tokens int
 	// approved holds the tools a human allowed for the rest of the session.
 	approved map[string]bool
 }
@@ -110,44 +117,21 @@ func (st *sessionState) rememberApproval(tool string) {
 	st.approved[tool] = true
 }
 
-// observe notes that a call is being evaluated and returns the counters the
-// evaluator needs, as they stood before this call.
-func (st *sessionState) observe(tool, sig string, now time.Time) policy.Counts {
+// observe notes that a call is being evaluated and returns what the evaluator
+// needs to know about the session, as it stood before this call.
+func (st *sessionState) observe(tool, sig string, now time.Time) (policy.Counts, policy.History) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	repeats := 0
-	if sig == st.lastSig {
-		repeats = st.streak
-		st.streak++
-	} else {
-		st.lastSig = sig
-		st.streak = 1
-	}
-	cutoff := now.Add(-time.Minute)
-	keep := st.recent[:0]
-	for _, t := range st.recent {
-		if t.After(cutoff) {
-			keep = append(keep, t)
-		}
-	}
-	st.recent = keep
-	return policy.Counts{
-		Session:    st.calls,
-		Tool:       st.perTool[tool],
-		LastMinute: len(st.recent),
-		Repeats:    repeats,
-		Tokens:     st.tokens,
-	}
+	return st.track.Observe(tool, sig, now), st.track.History()
 }
 
-// forwarded records that a call went upstream and what it cost.
-func (st *sessionState) forwarded(tool string, tokens int, now time.Time) {
+// forwarded records that a call went upstream and what it cost, and adds the
+// labels it earned. It returns the labels the session did not have before.
+func (st *sessionState) forwarded(call *policy.Call, tokens int, now time.Time, labels []string) []string {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.calls++
-	st.perTool[tool]++
-	st.recent = append(st.recent, now)
-	st.tokens += tokens
+	st.track.Forwarded(call, tokens, now)
+	return st.track.Earn(labels...)
 }
 
 // hostInfo records who connected. It is called once, before the session is
@@ -173,11 +157,22 @@ func New(opts Options) (*Proxy, error) {
 		cfg:      opts.Config,
 		byName:   map[string]*upstream{},
 		done:     make(chan struct{}),
+		pinMode:  opts.Pinning,
+
+		telemetry: opts.Telemetry,
 	}
 	if p.approver == nil {
 		p.approver = DenyApprover{}
 	}
 	p.notify = newNotifier(p)
+	if path := opts.Config.Canaries.Path; path != "" {
+		store, err := canary.Open(path)
+		if err != nil {
+			log.Error("cannot read the canaries; exfiltration checks are off", "path", path, "error", err)
+		} else {
+			p.canaries = store
+		}
+	}
 	for i := range opts.Config.Upstreams {
 		u := &upstream{
 			cfg: &opts.Config.Upstreams[i],
@@ -256,6 +251,7 @@ func (p *Proxy) Connect(ctx context.Context) error {
 	if err := p.Refresh(ctx); err != nil {
 		p.log.Warn("building tool catalog", "error", err)
 	}
+	p.watchLockfile(2 * time.Second)
 	return nil
 }
 
@@ -358,9 +354,12 @@ func (p *Proxy) RunStdio(ctx context.Context) error {
 }
 
 // HTTPHandler serves the Streamable HTTP transport for downstream hosts.
+// Sessions idle for half a day are closed: a host that went away without
+// saying so, and the throwaway session a server/discover runs on, would
+// otherwise stay open for as long as the process runs.
 func (p *Proxy) HTTPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return p.server },
-		&mcp.StreamableHTTPOptions{Logger: p.log})
+		&mcp.StreamableHTTPOptions{Logger: p.log, SessionTimeout: 12 * time.Hour})
 }
 
 // Close ends every downstream session and closes every upstream.
@@ -420,6 +419,7 @@ func (p *Proxy) recordSessionStart(ss *mcp.ServerSession, st *sessionState, clie
 			HostName:            st.hostName,
 			HostVersion:         st.hostVersion,
 			DownstreamTransport: st.transport,
+			CatalogHash:         p.catalogHash(),
 		}
 		if err := p.store.StartSession(ctx, rec); err != nil {
 			p.log.Warn("audit: cannot open session", "session", st.id, "error", err)
@@ -450,7 +450,7 @@ func (p *Proxy) endSession(ss *mcp.ServerSession) {
 		return
 	}
 	st.finished = true
-	calls := st.calls
+	calls := st.track.Calls()
 	st.mu.Unlock()
 
 	if p.store != nil {

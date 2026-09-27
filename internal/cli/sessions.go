@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -118,13 +119,25 @@ func newShowCmd(g *globals) *cobra.Command {
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "session  %s\n", sess.ID)
 			fmt.Fprintf(out, "host     %s %s\n", orDash(sess.HostName), sess.HostVersion)
-			fmt.Fprintf(out, "started  %s (%s)\n\n", sess.StartedAt.Local().Format(time.RFC3339),
+			fmt.Fprintf(out, "started  %s (%s)\n", sess.StartedAt.Local().Format(time.RFC3339),
 				sess.Duration().Round(time.Second))
+			var earned []string
+			for _, c := range calls {
+				earned = append(earned, c.Labels...)
+			}
+			if len(earned) > 0 {
+				fmt.Fprintf(out, "labels   %s\n", strings.Join(earned, ", "))
+			}
+			fmt.Fprintln(out)
 			if len(calls) == 0 {
 				fmt.Fprintln(out, "no calls match")
 				return nil
 			}
-			t := newTable(out, "TIME", "DECISION", "TOOL", "MS", "RULE", "DETAIL")
+			headers := []string{"TIME", "DECISION", "TOOL", "MS", "RULE", "DETAIL"}
+			if len(earned) > 0 {
+				headers = append(headers, "LABELS")
+			}
+			t := newTable(out, headers...)
 			for _, c := range calls {
 				detail := c.Reason
 				if c.Error != "" {
@@ -133,8 +146,16 @@ func newShowCmd(g *globals) *cobra.Command {
 				if showArgs {
 					detail = string(c.Args)
 				}
-				t.row(c.TS.Local().Format("15:04:05"), c.Decision, truncate(c.Tool, 32),
-					c.DurationMS, orDash(c.RuleID), truncate(detail, 48))
+				row := []any{c.TS.Local().Format("15:04:05"), c.Decision, truncate(c.Tool, 32),
+					c.DurationMS, orDash(c.RuleID), truncate(detail, 48)}
+				if len(earned) > 0 {
+					label := ""
+					if len(c.Labels) > 0 {
+						label = "+" + strings.Join(c.Labels, " +")
+					}
+					row = append(row, label)
+				}
+				t.row(row...)
 			}
 			t.flush()
 			fmt.Fprintf(out, "\n%d calls, %d denied\n", sess.Calls, sess.Denied)

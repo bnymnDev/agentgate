@@ -2,7 +2,11 @@ package audit
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/bnymnDev/agentgate/internal/policy"
@@ -16,6 +20,9 @@ type Session struct {
 	HostName            string     `json:"host_name,omitempty"`
 	HostVersion         string     `json:"host_version,omitempty"`
 	DownstreamTransport string     `json:"downstream_transport,omitempty"`
+	// CatalogHash names the tool catalog the session started with; see
+	// Store.Catalog.
+	CatalogHash string `json:"catalog_hash,omitempty"`
 
 	// Calls and Denied are filled in by the listing queries, not stored.
 	Calls  int `json:"calls"`
@@ -55,6 +62,17 @@ type Call struct {
 	// Shadow reports that the decision was recorded but not applied: the
 	// policy was in shadow mode and the call was forwarded anyway.
 	Shadow bool `json:"shadow,omitempty"`
+	// Labels are the labels the session earned with this call.
+	Labels []string `json:"labels,omitempty"`
+	// CatalogHash names the tool catalog in force when the call was made.
+	CatalogHash string `json:"catalog_hash,omitempty"`
+
+	// Seq, PrevHash and RowHash are the call's link in the hash chain. They
+	// are assigned when the row is written; Seq is zero for rows written
+	// before the chain existed.
+	Seq      int64  `json:"seq,omitempty"`
+	PrevHash string `json:"prev_hash,omitempty"`
+	RowHash  string `json:"row_hash,omitempty"`
 }
 
 // Blocked reports whether the call was actually stopped: a deny that was
@@ -69,10 +87,64 @@ func (s *Store) StartSession(ctx context.Context, sess *Session) error {
 		return nil
 	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO sessions (id, started_at, host_name, host_version, downstream_transport)
-		 VALUES (?, ?, ?, ?, ?)`,
-		sess.ID, sess.StartedAt.UnixMilli(), sess.HostName, sess.HostVersion, sess.DownstreamTransport)
+		`INSERT INTO sessions (id, started_at, host_name, host_version, downstream_transport, catalog_hash)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		sess.ID, sess.StartedAt.UnixMilli(), sess.HostName, sess.HostVersion, sess.DownstreamTransport, sess.CatalogHash)
 	return err
+}
+
+// CatalogEntry is one tool of a catalog snapshot: the definition exactly as
+// the upstream server sent it, and the name agentgate exposed it under.
+type CatalogEntry struct {
+	Upstream string          `json:"upstream"`
+	Exposed  string          `json:"exposed"`
+	Tool     json.RawMessage `json:"tool"`
+}
+
+// SaveCatalog stores a tool catalog under its hash, once, and returns the
+// hash. It is asynchronous and best effort like every other write; the hash
+// is computed up front so the caller can reference the catalog at once.
+func (s *Store) SaveCatalog(raw []byte) string {
+	hash := Hash(raw)
+	if s == nil || hash == "" {
+		return hash
+	}
+	canonical := string(Canonical(raw))
+	s.enqueue("catalog", func(ctx context.Context) {
+		if _, err := s.db.ExecContext(ctx,
+			`INSERT OR IGNORE INTO catalogs (hash, json, created_at) VALUES (?, ?, ?)`,
+			hash, canonical, time.Now().UnixMilli()); err != nil {
+			s.log.Warn("audit: cannot record the tool catalog", "error", err)
+		}
+	})
+	return hash
+}
+
+// LatestCatalog returns the tool catalog recorded most recently, which is the
+// best offline answer to "what tools do the servers offer".
+func (s *Store) LatestCatalog(ctx context.Context) (json.RawMessage, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT json FROM catalogs ORDER BY created_at DESC LIMIT 1`).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("no catalog recorded: %w", ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
+}
+
+// Catalog returns a stored tool catalog by hash.
+func (s *Store) Catalog(ctx context.Context, hash string) (json.RawMessage, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT json FROM catalogs WHERE hash = ?`, hash).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("catalog %q: %w", hash, ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
 }
 
 // EndSession stamps a session as finished. Best effort, like every other write
@@ -129,29 +201,106 @@ func (s *Store) prepare(c *Call) *Call {
 	return &out
 }
 
+// insertCall writes a call as the next link of the hash chain. The link is
+// read and written in one immediate transaction, which holds SQLite's write
+// lock throughout, so several agentgate processes sharing one database still
+// build a single chain.
 func (s *Store) insertCall(ctx context.Context, c *Call) error {
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	head, err := chainHead(ctx, tx)
+	if err != nil {
+		return err
+	}
+	c.Seq = head.Seq + 1
+	c.PrevHash = head.Hash
+	c.RowHash = rowHash(c)
+	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO calls (id, session_id, ts, upstream, tool, args_json, args_hash,
 		                    decision, rule_id, reason, result_json, result_hash,
-		                    is_error, duration_ms, tokens_est, result_truncated, error, shadow)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		                    is_error, duration_ms, tokens_est, result_truncated, error, shadow,
+		                    labels, catalog_hash, seq, prev_hash, row_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		c.ID, c.SessionID, c.TS.UnixMilli(), c.Upstream, c.Tool, string(c.Args), c.ArgsHash,
 		string(c.Decision), c.RuleID, c.Reason, string(c.Result), c.ResultHash,
-		boolInt(c.IsError), c.DurationMS, c.TokensEst, boolInt(c.ResultTruncated), c.Error, boolInt(c.Shadow))
-	return err
+		boolInt(c.IsError), c.DurationMS, c.TokensEst, boolInt(c.ResultTruncated), c.Error, boolInt(c.Shadow),
+		strings.Join(c.Labels, ","), c.CatalogHash, c.Seq, c.PrevHash, c.RowHash); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// Prune deletes every session that started before cutoff, and its calls.
+// Prune applies the retention period: it deletes the calls made before
+// cutoff and then every session that started before cutoff and has no calls
+// left. It returns the number of sessions deleted.
+//
+// Calls leave the hash chain from the front only. A call that is still
+// within the retention period keeps every later link, even one that is
+// older, and the last deleted link becomes the chain's anchor so that what
+// remains still verifies.
 func (s *Store) Prune(ctx context.Context, cutoff time.Time) (int64, error) {
-	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM sessions WHERE started_at < ?`, cutoff.UnixMilli())
+	cut := cutoff.UnixMilli()
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
 	}
-	// Foreign keys are on, but a database created before they were enforced may
-	// still hold orphans; clean them up unconditionally.
-	if _, err := s.db.ExecContext(ctx,
-		`DELETE FROM calls WHERE session_id NOT IN (SELECT id FROM sessions)`); err != nil {
+	defer tx.Rollback()
+
+	var last sql.NullInt64
+	if err := tx.QueryRowContext(ctx, `
+		SELECT CASE
+		  WHEN EXISTS (SELECT 1 FROM calls WHERE seq IS NOT NULL AND ts >= ?)
+		    THEN (SELECT MIN(seq) FROM calls WHERE seq IS NOT NULL AND ts >= ?) - 1
+		  ELSE (SELECT MAX(seq) FROM calls WHERE seq IS NOT NULL)
+		END`, cut, cut).Scan(&last); err != nil {
+		return 0, err
+	}
+	if last.Valid && last.Int64 > 0 {
+		var hash string
+		err := tx.QueryRowContext(ctx, `SELECT row_hash FROM calls WHERE seq = ?`, last.Int64).Scan(&hash)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			// Already gone: the anchor is at or past it.
+		case err != nil:
+			return 0, err
+		default:
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO chain_anchor (id, seq, hash, pruned_at) VALUES (1, ?, ?, ?)
+				ON CONFLICT (id) DO UPDATE SET seq = excluded.seq, hash = excluded.hash, pruned_at = excluded.pruned_at
+				WHERE excluded.seq > chain_anchor.seq`,
+				last.Int64, hash, time.Now().UnixMilli()); err != nil {
+				return 0, err
+			}
+			if _, err := tx.ExecContext(ctx, `DELETE FROM calls WHERE seq IS NOT NULL AND seq <= ?`, last.Int64); err != nil {
+				return 0, err
+			}
+		}
+	}
+	// Rows from before the chain existed simply go by age, and so do the
+	// orphans a database created before foreign keys were enforced may hold.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM calls
+		WHERE seq IS NULL AND (ts < ? OR session_id NOT IN (SELECT id FROM sessions))`, cut); err != nil {
+		return 0, err
+	}
+	res, err := tx.ExecContext(ctx, `
+		DELETE FROM sessions
+		WHERE COALESCE(ended_at, started_at) < ?
+		  AND NOT EXISTS (SELECT 1 FROM calls c WHERE c.session_id = sessions.id)`, cut)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM catalogs
+		WHERE created_at < ?
+		  AND hash NOT IN (SELECT catalog_hash FROM sessions)
+		  AND hash NOT IN (SELECT catalog_hash FROM calls)`, cut); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()

@@ -87,3 +87,27 @@ article.frozen button { margin: 0; white-space: nowrap; }
 .freeze-form { display: flex; justify-content: flex-end; margin-bottom: 0.5rem; }
 .freeze-button { width: auto; padding: 0.35rem 0.8rem; font-size: 0.85rem; margin: 0; }
 .shadow-note { margin: 0 0 1rem; }
+
+.badge.label { color: var(--pico-primary); text-transform: none; letter-spacing: 0; }
+
+.live-sessions { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1rem; }
+.live-session {
+  display: inline-flex; gap: 0.45rem; align-items: center; flex-wrap: wrap;
+  padding: 0.4rem 0.7rem; border: 1px solid var(--pico-muted-border-color); border-radius: 0.5rem;
+  text-decoration: none;
+}
+.live-row {
+  display: flex; gap: 0.6rem; align-items: baseline; flex-wrap: wrap;
+  border-left: 3px solid var(--pico-muted-border-color);
+  padding: 0.25rem 0 0.25rem 0.8rem; margin-bottom: 0.2rem;
+  animation: live-in 1.2s ease-out;
+}
+.live-row.allow { border-left-color: var(--ag-allow); }
+.live-row.deny { border-left-color: var(--ag-deny); }
+.live-row.ask { border-left-color: var(--ag-ask); }
+.live-row.shadow { border-left-style: dashed; }
+.live-row.honeypot { background: color-mix(in srgb, var(--ag-deny) 8%, transparent); }
+.live-row .reason { margin: 0; flex-basis: 100%; }
+@keyframes live-in { from { background: color-mix(in srgb, var(--pico-primary) 14%, transparent); } }
+details.tool-report form { margin: 0.5rem 0 0; }
+details.tool-report form button { width: auto; }

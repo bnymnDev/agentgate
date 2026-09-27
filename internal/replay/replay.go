@@ -28,6 +28,17 @@ type Options struct {
 	OnlyAllowed bool
 	// Forwarder re-sends allowed calls. Nil means a dry run.
 	Forwarder Forwarder
+	// Host is the client that opened the recorded session, for host.*
+	// conditions.
+	Host policy.Host
+	// Annotations returns what the servers said about their tools in the
+	// catalog a call was made under, keyed by exposed tool name, for
+	// annotations.* conditions. Nil means nothing is known.
+	Annotations func(catalogHash string) map[string]policy.Annotations
+	// ResultLabels returns the labels agentgate itself attaches for a
+	// result (canary-read, injection-suspected), so a replayed session
+	// picks them up where the live one did. Nil attaches none.
+	ResultLabels func(result *policy.Result) []string
 }
 
 // Entry is one recorded call, re-evaluated and possibly re-sent.
@@ -47,6 +58,9 @@ type Entry struct {
 	Error string `json:"error,omitempty"`
 	// DurationMS is how long the fresh call took.
 	DurationMS int64 `json:"duration_ms,omitempty"`
+	// Labels are the labels the session earns with this call under the
+	// current policy.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // DecisionChanged reports whether the current policy disagrees with what was
@@ -102,15 +116,21 @@ func (r *Report) Counts() (allowed, denied, changed, failed int) {
 
 // Run replays the calls in order.
 //
-// Budgets are simulated as the walk proceeds, so a policy that adds a budget
-// shows up in a dry run exactly where the session would have run out.
+// The session is simulated as the walk proceeds, the way the proxy tracks a
+// live one: budgets, the rate limit, the loop guard, labels and the list of
+// tools called all build up call by call. A policy that adds a budget shows up
+// in a dry run exactly where the session would have run out, and one that
+// adds a label rule changes the decisions after the call that earns it.
+//
+// A call counts as having gone through when the current policy allows it, or
+// asks and the call went through at the time: the human who approved it then
+// is taken to approve it again.
 func Run(ctx context.Context, sessionID string, calls []*audit.Call, opts Options) (*Report, error) {
 	if opts.Policy == nil {
 		return nil, errors.New("replay: no policy to evaluate against")
 	}
 	report := &Report{SessionID: sessionID, DryRun: opts.Forwarder == nil}
-	counts := policy.Counts{}
-	perTool := map[string]int{}
+	var track policy.Tracker
 
 	for _, rec := range calls {
 		if err := ctx.Err(); err != nil {
@@ -132,14 +152,17 @@ func Run(ctx context.Context, sessionID string, calls []*audit.Call, opts Option
 			Upstream: rec.Upstream,
 			ToolName: toolName(rec),
 			Args:     decodeArgs(rec.Args),
-			Counts:   policy.Counts{Session: counts.Session, Tool: perTool[rec.Tool]},
+			Counts:   track.Observe(rec.Tool, rec.Tool+"\x00"+rec.ArgsHash, rec.TS),
+			At:       rec.TS,
+			Host:     opts.Host,
+			Session:  track.History(),
+		}
+		if opts.Annotations != nil {
+			call.Annotations = opts.Annotations(rec.CatalogHash)[rec.Tool]
 		}
 		entry.Now = policy.Evaluate(opts.Policy, call)
 
-		if entry.Now.Action == policy.ActionAllow {
-			counts.Session++
-			perTool[rec.Tool]++
-		}
+		result := rec.Result
 		if opts.Forwarder != nil && entry.Now.Action == policy.ActionAllow {
 			started := time.Now()
 			raw, err := opts.Forwarder.ForwardJSON(ctx, rec.Tool, rec.Args)
@@ -147,9 +170,29 @@ func Run(ctx context.Context, sessionID string, calls []*audit.Call, opts Option
 			entry.Sent = true
 			if err != nil {
 				entry.Error = err.Error()
+				result = nil
 			} else {
 				entry.ResultHash = audit.Hash(raw)
+				result = raw
 			}
+		}
+
+		wentThrough := entry.Now.Action == policy.ActionAllow ||
+			(entry.Now.Action == policy.ActionAsk && rec.Decision == policy.ActionAllow)
+		if wentThrough {
+			var labels []string
+			res := policy.ResultFromJSON(result)
+			if opts.ResultLabels != nil && res != nil {
+				labels = append(labels, opts.ResultLabels(res)...)
+			}
+			if len(opts.Policy.Labels) > 0 {
+				if opts.Policy.LabelsReadResult() {
+					call.Result = res
+				}
+				labels = append(labels, policy.LabelsFor(opts.Policy, call)...)
+			}
+			track.Forwarded(call, rec.TokensEst, rec.TS)
+			entry.Labels = track.Earn(labels...)
 		}
 		report.Entries = append(report.Entries, entry)
 	}

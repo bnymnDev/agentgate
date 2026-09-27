@@ -22,6 +22,8 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/cli"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/packs"
+	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
 func main() {
@@ -34,9 +36,10 @@ func main() {
 		"flags":      flagSections(root),
 		"matchers":   matcherTable(),
 		"redactions": redactionList(),
+		"packs":      packTable(),
 	}
 	changed := 0
-	for _, file := range []string{"README.md", "docs/config.md", "docs/policies.md", "docs/replay.md"} {
+	for _, file := range []string{"README.md", "docs/config.md", "docs/policies.md", "docs/replay.md", "docs/guardrails.md", "docs/integrations.md"} {
 		n, err := rewrite(file, blocks)
 		if err != nil {
 			log.Fatal(err)
@@ -147,11 +150,14 @@ func matcherTable() string {
 		{"`equals`", "the value is exactly this", `args.dryRun: { equals: false }`},
 		{"`not_equals`", "the value is anything but this", `args.mode: { not_equals: "dry" }`},
 		{"`regex`", "the value matches this Go regular expression", `args.command: { regex: '\brm\s+-rf' }`},
+		{"`not_regex`", "the value does not match this regular expression", `args.sql: { not_regex: '(?i)\bwhere\b' }`},
 		{"`prefix`", "the value starts with this string", `args.path: { prefix: "/etc/" }`},
 		{"`not_prefix`", "the value does not start with this string", `args.path: { not_prefix: "/srv/app/" }`},
 		{"`in`", "the value is one of these", `args.env: { in: ["prod", "staging"] }`},
 		{"`gt`, `lt`", "the value is a number above / below this; both may be combined", `args.amount: { gt: 10, lt: 100 }`},
 		{"`exists`", "the path is present (`true`) or absent (`false`)", `args.dryRun: { exists: false }`},
+		{"`includes`", "one of the values — or one item of a list among them — is exactly this", `session.labels: { includes: private-data }`},
+		{"`excludes`", "no value, and no item of a list among them, is this; also holds when there is none", `session.called: { excludes: shell.test }`},
 	}
 	var b strings.Builder
 	b.WriteString("| Matcher | Holds when | Example |\n|---|---|---|\n")
@@ -159,6 +165,38 @@ func matcherTable() string {
 		fmt.Fprintf(&b, "| %s | %s | <code>%s</code> |\n", r[0], r[1], strings.ReplaceAll(r[2], "|", "\\|"))
 	}
 	return b.String()
+}
+
+// packTable lists the packs that ship with agentgate.
+func packTable() string {
+	var b strings.Builder
+	b.WriteString("| Pack | Parameters | What it does |\n|---|---|---|\n")
+	for _, name := range packs.Names() {
+		src, _ := packs.Get(name)
+		head, err := policy.ReadPackHeader(src)
+		if err != nil {
+			log.Fatalf("pack %s: %v", name, err)
+		}
+		var params []string
+		for p, spec := range head.Params {
+			entry := "`" + p + "`"
+			if spec.Required {
+				entry += " (required)"
+			}
+			params = append(params, entry)
+		}
+		sort.Strings(params)
+		desc := strings.Join(strings.Fields(head.Description), " ")
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", name, orNone(strings.Join(params, ", ")), strings.ReplaceAll(desc, "|", "\\|"))
+	}
+	return b.String()
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 // redactionList prints the patterns that are applied to every recorded call.

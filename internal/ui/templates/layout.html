@@ -15,8 +15,10 @@
       <li><strong><a href="/" class="brand">agentgate</a></strong></li>
     </ul>
     <ul>
+      <li><a href="/live" {{if eq .Nav "live"}}aria-current="page"{{end}}>Live</a></li>
       <li><a href="/" {{if eq .Nav "sessions"}}aria-current="page"{{end}}>Sessions</a></li>
       <li><a href="/approvals" {{if eq .Nav "approvals"}}aria-current="page"{{end}}>Approvals{{if .PendingCount}} <span class="badge ask">{{.PendingCount}}</span>{{end}}</a></li>
+      <li><a href="/tools" {{if eq .Nav "tools"}}aria-current="page"{{end}}>Tools</a></li>
       <li><a href="/policy" {{if eq .Nav "policy"}}aria-current="page"{{end}}>Policy</a></li>
     </ul>
   </nav>

@@ -1,0 +1,32 @@
+# Every pack that can sit side by side, as a user would switch them on.
+version: 1
+upstreams:
+  - name: shell
+    stdio: ["testdata/servers/echo"]
+  - name: fs
+    stdio: ["testdata/servers/echo"]
+  - name: gh
+    stdio: ["testdata/servers/echo"]
+  - name: db
+    stdio: ["testdata/servers/echo"]
+policy:
+  default: allow
+  packs:
+    - baseline
+    - shell-strict
+    - secrets
+    - git-safety
+    - github
+    - database
+    - name: filesystem
+      with: { workspace: /home/me/repo/ }
+    - ask-destructive
+    - business-hours
+  rules:
+    # Your own rules come before every pack: this carves out one exception.
+    - id: allow-clean-in-ci
+      tool: "shell.exec"
+      when:
+        args.command: { equals: "git clean -fdx" }
+      action: allow
+      reason: "CI checkouts are thrown away anyway"

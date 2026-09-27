@@ -10,6 +10,8 @@
   <article><h3>{{.Stats.Denied}}</h3><small>denied</small></article>
   <article><h3>{{.Stats.Shadowed}}</h3><small>shadowed</small></article>
   <article{{if .Stats.Honeypots}} class="alert"{{end}}><h3>{{.Stats.Honeypots}}</h3><small>honeypot trips</small></article>
+  <article{{if .Stats.Canaries}} class="alert"{{end}}><h3>{{.Stats.Canaries}}</h3><small>canaries caught</small></article>
+  <article{{if .Stats.Quarantined}} class="alert"{{end}}><h3>{{.Stats.Quarantined}}</h3><small>quarantined calls</small></article>
   <article><h3>{{.Stats.Errors}}</h3><small>errors</small></article>
   <article><h3>{{tokens .Stats.Tokens}}</h3><small>tokens (est.)</small></article>
 </div>

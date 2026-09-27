@@ -9,6 +9,7 @@
 package policy
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -58,12 +59,28 @@ type Decision struct {
 	RuleID string `json:"rule_id,omitempty"`
 }
 
+// Labels agentgate itself attaches to a session, next to the ones label
+// rules attach.
+const (
+	// LabelCanaryRead marks a session that got a canary token back from a
+	// tool.
+	LabelCanaryRead = "canary-read"
+	// LabelInjectionSuspected marks a session that got a tool result with
+	// hidden text or instructions addressed to the model.
+	LabelInjectionSuspected = "injection-suspected"
+)
+
 // Ids used for decisions that do not come from a rule in the rules list.
 const (
 	RuleFrozen    = "frozen"
 	RuleLoopGuard = "loop-guard"
 	RuleBudget    = "budget"
 	RuleHoneypot  = "honeypot"
+	// RuleQuarantine denies calls to a tool whose definition changed since
+	// it was pinned, or that the definition scan flagged.
+	RuleQuarantine = "quarantine"
+	// RuleCanary denies a call that carries a canary token out.
+	RuleCanary = "canary"
 )
 
 // Allowed reports whether the call may be forwarded without further ado.
@@ -88,11 +105,45 @@ type Policy struct {
 	// before they reach the agent, not only before they reach the audit log.
 	// It is the one place agentgate deliberately changes a result, and it is
 	// off unless you turn it on.
-	RedactResults bool      `yaml:"redact_results" json:"redact_results,omitempty"`
-	Budget        Budget    `yaml:"budget" json:"budget"`
-	LoopGuard     LoopGuard `yaml:"loop_guard" json:"loop_guard"`
+	RedactResults bool `yaml:"redact_results" json:"redact_results,omitempty"`
+	// StripInvisible removes characters that render as nothing — Unicode tag
+	// characters, zero-width and bidirectional controls — from tool results
+	// before the agent reads them. They are how a web page or an issue
+	// comment smuggles instructions past the person looking at it. Off
+	// unless you turn it on; the audit log keeps the result as it came.
+	StripInvisible bool      `yaml:"strip_invisible" json:"strip_invisible,omitempty"`
+	Budget         Budget    `yaml:"budget" json:"budget"`
+	LoopGuard      LoopGuard `yaml:"loop_guard" json:"loop_guard"`
+	// Labels attach names to a session once a matching call has gone
+	// through, so that later rules can ask what the session has done
+	// ("session.label.untrusted-input"). See LabelsFor.
+	Labels []*LabelRule `yaml:"labels" json:"labels,omitempty"`
+	// Packs are named rule sets that ship with agentgate or live in a file
+	// next to the config. Their rules are evaluated after the rules below, so
+	// your own rules can always make an exception.
+	Packs []PackRef `yaml:"packs" json:"packs,omitempty"`
 	// Rules are evaluated top to bottom; the first match wins.
 	Rules []*Rule `yaml:"rules" json:"rules"`
+
+	// labelsReadResult is set by Compile when a label rule looks at the
+	// result, so the proxy only extracts one when something will read it.
+	labelsReadResult bool
+}
+
+// LabelsReadResult reports whether any label rule has a result.* condition.
+func (p *Policy) LabelsReadResult() bool { return p != nil && p.labelsReadResult }
+
+// LabelRule attaches a label to the session when a call it matches has been
+// forwarded. It matches like a rule — tool pattern plus conditions — but has
+// no action of its own.
+type LabelRule struct {
+	Label string     `yaml:"label" json:"label"`
+	Tool  string     `yaml:"tool" json:"tool,omitempty"`
+	When  Conditions `yaml:"when" json:"when,omitempty"`
+	// Pack names the pack the label rule came from, if any.
+	Pack string `yaml:"-" json:"pack,omitempty"`
+
+	tool *pattern
 }
 
 // Budget caps what a single session may do. Every cap is a hard stop checked
@@ -127,6 +178,8 @@ type Rule struct {
 	When   Conditions `yaml:"when" json:"when,omitempty"`
 	Action Action     `yaml:"action" json:"action"`
 	Reason string     `yaml:"reason" json:"reason,omitempty"`
+	// Pack names the pack the rule came from; empty for your own rules.
+	Pack string `yaml:"-" json:"pack,omitempty"`
 
 	// tool holds the compiled form of Tool. It is populated by Compile so that
 	// Evaluate never has to compile anything.
@@ -155,6 +208,86 @@ type Call struct {
 	At time.Time `json:"at,omitzero"`
 	// Frozen is set when the gateway's kill switch is on.
 	Frozen bool `json:"frozen,omitempty"`
+	// Host is the MCP client that opened the session.
+	Host Host `json:"host,omitzero"`
+	// Session is what the session has done before this call.
+	Session History `json:"session,omitzero"`
+	// Result is what the upstream answered. It is only known once the call
+	// has been forwarded, so only label rules get to look at it; Compile
+	// rejects a result.* condition in a rule.
+	Result *Result `json:"result,omitempty"`
+}
+
+// Result is the part of a tool result a label rule can match on.
+type Result struct {
+	// IsError is the result's isError flag: the tool ran and failed.
+	IsError bool `json:"is_error,omitempty"`
+	// Text is what the agent reads: the text content and embedded text
+	// resources, one per line, or the structured content as JSON when there
+	// is no text.
+	Text string `json:"text,omitempty"`
+}
+
+// ResultFromJSON extracts a Result from a tools/call result as it travels on
+// the wire, which is also how the audit log stores it. It returns nil for
+// anything that does not parse, such as a result the audit log truncated.
+func ResultFromJSON(raw []byte) *Result {
+	if len(raw) == 0 {
+		return nil
+	}
+	var r struct {
+		IsError bool `json:"isError"`
+		Content []struct {
+			Type     string `json:"type"`
+			Text     string `json:"text"`
+			Resource *struct {
+				Text string `json:"text"`
+			} `json:"resource"`
+		} `json:"content"`
+		Structured json.RawMessage `json:"structuredContent"`
+	}
+	if err := json.Unmarshal(raw, &r); err != nil {
+		return nil
+	}
+	var parts []string
+	for _, c := range r.Content {
+		switch {
+		case c.Type == "text" && c.Text != "":
+			parts = append(parts, c.Text)
+		case c.Resource != nil && c.Resource.Text != "":
+			parts = append(parts, c.Resource.Text)
+		}
+	}
+	if len(parts) == 0 && len(r.Structured) > 0 && string(r.Structured) != "null" {
+		parts = append(parts, string(r.Structured))
+	}
+	return &Result{IsError: r.IsError, Text: strings.Join(parts, "\n")}
+}
+
+// Host identifies the MCP client on the other end of a session, as it
+// introduced itself.
+type Host struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+// History is the part of a session's past the evaluator may look at.
+type History struct {
+	// Labels are the labels the session has picked up, sorted.
+	Labels []string `json:"labels,omitempty"`
+	// Called lists the tools the session has already called, in both the
+	// exposed and the canonical upstream.tool spelling.
+	Called []string `json:"called,omitempty"`
+}
+
+// HasLabel reports whether the history carries a label.
+func (h History) HasLabel(label string) bool {
+	for _, l := range h.Labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
 }
 
 // Counts are the calls already recorded for this session, not counting the
@@ -312,6 +445,60 @@ func (r *Rule) reason() string {
 		return fmt.Sprintf("matched rule %s (%s)", r.ID, r.Tool)
 	}
 	return "matched rule " + r.ID
+}
+
+// LabelsFor returns the labels a call earns for its session: those of every
+// label rule it matches, in the order the rules are written, without
+// duplicates. It is pure, like Evaluate, and meant to be applied once the call
+// has actually been forwarded, with call.Result set when there is one.
+func LabelsFor(p *Policy, call *Call) []string {
+	if p == nil {
+		return nil
+	}
+	var out []string
+	seen := map[string]bool{}
+	for _, lr := range p.Labels {
+		if seen[lr.Label] || !lr.matches(call) {
+			continue
+		}
+		seen[lr.Label] = true
+		out = append(out, lr.Label)
+	}
+	return out
+}
+
+func (lr *LabelRule) matches(call *Call) bool {
+	if lr.tool != nil && !lr.tool.matchAny(call.names()) {
+		return false
+	}
+	for _, cond := range lr.When {
+		if !cond.holds(call) {
+			return false
+		}
+	}
+	return true
+}
+
+// Names returns the spellings rule patterns are matched against: the exposed
+// name and, when it differs, the canonical upstream.tool name. session.called
+// holds both, so that either spelling works in a condition on it.
+func (c *Call) Names() []string { return c.names() }
+
+// ValidLabel reports whether s may be used as a label name: lower-case
+// letters, digits, dashes and underscores, starting with a letter or digit.
+func ValidLabel(s string) bool {
+	if s == "" || len(s) > 64 {
+		return false
+	}
+	for i, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case (r == '-' || r == '_') && i > 0:
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // Weekday names as time.* conditions see them.

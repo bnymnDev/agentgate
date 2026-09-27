@@ -1,8 +1,12 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,6 +22,7 @@ func newStatsCmd(g *globals) *cobra.Command {
 		asJSON   bool
 		markdown bool
 		top      int
+		failOn   string
 	)
 	cmd := &cobra.Command{
 		Use:   "stats",
@@ -25,7 +30,16 @@ func newStatsCmd(g *globals) *cobra.Command {
 		Long: `Summarise the audit log: calls per tool, what was denied and by which rule,
 how long tools take, and roughly how many tokens went through them.
 
---markdown prints a table you can paste into a pull request or a post.`,
+--markdown prints a table you can paste into a pull request or a post.
+
+--fail-on turns it into a check, for CI or cron: it exits 1 when any of the
+thresholds is crossed, and says which.
+
+	agentgate stats --since 1h --fail-on 'canary>0,honeypot>0,denied>=10'
+	agentgate stats --fail-on 'rule:baseline/rm-rf-root>0'
+
+Counters: calls, denied, shadowed, honeypot, canary, quarantine, errors,
+tokens, sessions, and rule:<id> for how often one rule decided.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := g.load()
@@ -33,6 +47,22 @@ how long tools take, and roughly how many tokens went through them.
 				return err
 			}
 			store, err := g.openStore(cmd.Context(), cfg)
+			if errors.Is(err, errNoAuditLog) && session == "" {
+				// Nothing recorded is a valid answer: every counter is zero,
+				// which is what the thresholds get to see.
+				fmt.Fprintf(cmd.ErrOrStderr(), "no audit database at %s yet; nothing recorded\n", cfg.Audit.Path)
+				if failOn != "" {
+					crossed, err := checkThresholds(failOn, &audit.Stats{}, nil)
+					if err != nil {
+						return err
+					}
+					if len(crossed) > 0 {
+						fmt.Fprintf(cmd.ErrOrStderr(), "threshold crossed: %s\n", strings.Join(crossed, ", "))
+						return errExitDenied
+					}
+				}
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -67,6 +97,12 @@ how long tools take, and roughly how many tokens went through them.
 			if err != nil {
 				return err
 			}
+			var crossed []string
+			if failOn != "" {
+				if crossed, err = checkThresholds(failOn, totals, rules); err != nil {
+					return err
+				}
+			}
 			if top > 0 && len(tools) > top {
 				tools = tools[:top]
 			}
@@ -76,6 +112,10 @@ how long tools take, and roughly how many tokens went through them.
 				})
 			}
 			printStats(cmd.OutOrStdout(), markdown, since, sessionID, totals, tools, rules)
+			if len(crossed) > 0 {
+				fmt.Fprintf(cmd.ErrOrStderr(), "\nthreshold crossed: %s\n", strings.Join(crossed, ", "))
+				return errExitDenied
+			}
 			return nil
 		},
 	}
@@ -84,7 +124,65 @@ how long tools take, and roughly how many tokens went through them.
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print as JSON")
 	cmd.Flags().BoolVar(&markdown, "markdown", false, "print as Markdown tables")
 	cmd.Flags().IntVar(&top, "top", 25, "how many tools to list")
+	cmd.Flags().StringVar(&failOn, "fail-on", "", "exit 1 when a threshold is crossed, e.g. 'canary>0,denied>=10'")
 	return cmd
+}
+
+var thresholdRe = regexp.MustCompile(`^\s*([a-z]+|rule:[^<>=!\s]+)\s*(>=|<=|>|<|==|=|!=)\s*(\d+)\s*$`)
+
+// checkThresholds evaluates a --fail-on list against the numbers and returns
+// the conditions that hold, as written.
+func checkThresholds(spec string, t *audit.Stats, rules []*audit.RuleStat) ([]string, error) {
+	var crossed []string
+	for _, part := range strings.Split(spec, ",") {
+		if strings.TrimSpace(part) == "" {
+			continue
+		}
+		m := thresholdRe.FindStringSubmatch(part)
+		if m == nil {
+			return nil, fmt.Errorf("--fail-on %q: want counter, operator and number, like denied>0", strings.TrimSpace(part))
+		}
+		var value int
+		switch name := m[1]; {
+		case strings.HasPrefix(name, "rule:"):
+			id := strings.TrimPrefix(name, "rule:")
+			for _, r := range rules {
+				if r.RuleID == id {
+					value += r.Calls
+				}
+			}
+		default:
+			v, ok := map[string]int{
+				"calls": t.Calls, "denied": t.Denied, "shadowed": t.Shadowed, "honeypot": t.Honeypots,
+				"canary": t.Canaries, "quarantine": t.Quarantined, "errors": t.Errors, "tokens": t.Tokens,
+				"sessions": t.Sessions,
+			}[name]
+			if !ok {
+				return nil, fmt.Errorf("--fail-on: unknown counter %q", name)
+			}
+			value = v
+		}
+		limit, _ := strconv.Atoi(m[3])
+		var hit bool
+		switch m[2] {
+		case ">":
+			hit = value > limit
+		case ">=":
+			hit = value >= limit
+		case "<":
+			hit = value < limit
+		case "<=":
+			hit = value <= limit
+		case "=", "==":
+			hit = value == limit
+		case "!=":
+			hit = value != limit
+		}
+		if hit {
+			crossed = append(crossed, fmt.Sprintf("%s (is %d)", strings.TrimSpace(part), value))
+		}
+	}
+	return crossed, nil
 }
 
 func printStats(out io.Writer, md bool, since, sessionID string, t *audit.Stats, tools []*audit.ToolStat, rules []*audit.RuleStat) {
@@ -97,8 +195,8 @@ func printStats(out io.Writer, md bool, since, sessionID string, t *audit.Stats,
 	}
 	if md {
 		fmt.Fprintf(out, "### agentgate — %s\n\n", scope)
-		fmt.Fprintf(out, "| sessions | calls | denied | shadowed | honeypot trips | errors | tokens (est.) |\n|---|---|---|---|---|---|---|\n")
-		fmt.Fprintf(out, "| %d | %d | %d | %d | %d | %d | %s |\n\n", t.Sessions, t.Calls, t.Denied, t.Shadowed, t.Honeypots, t.Errors, humanTokens(t.Tokens))
+		fmt.Fprintf(out, "| sessions | calls | denied | shadowed | honeypot trips | canaries caught | quarantined | errors | tokens (est.) |\n|---|---|---|---|---|---|---|---|---|\n")
+		fmt.Fprintf(out, "| %d | %d | %d | %d | %d | %d | %d | %d | %s |\n\n", t.Sessions, t.Calls, t.Denied, t.Shadowed, t.Honeypots, t.Canaries, t.Quarantined, t.Errors, humanTokens(t.Tokens))
 		if len(tools) > 0 {
 			fmt.Fprintf(out, "| tool | calls | allowed | denied | errors | avg ms | tokens |\n|---|---|---|---|---|---|---|\n")
 			for _, s := range tools {
@@ -116,8 +214,9 @@ func printStats(out io.Writer, md bool, since, sessionID string, t *audit.Stats,
 	}
 
 	fmt.Fprintf(out, "agentgate stats — %s\n\n", scope)
-	fmt.Fprintf(out, "  sessions %-6d calls %-6d denied %-6d shadowed %-6d honeypot trips %-4d errors %-4d tokens ~%s\n\n",
-		t.Sessions, t.Calls, t.Denied, t.Shadowed, t.Honeypots, t.Errors, humanTokens(t.Tokens))
+	fmt.Fprintf(out, "  sessions %-6d calls %-6d denied %-6d shadowed %-6d errors %-4d tokens ~%s\n",
+		t.Sessions, t.Calls, t.Denied, t.Shadowed, t.Errors, humanTokens(t.Tokens))
+	fmt.Fprintf(out, "  honeypot trips %-4d canaries caught %-4d quarantined calls %d\n\n", t.Honeypots, t.Canaries, t.Quarantined)
 	if len(tools) == 0 {
 		fmt.Fprintln(out, "no calls recorded in this window")
 		return

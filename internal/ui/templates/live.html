@@ -1,0 +1,53 @@
+{{define "content"}}
+<hgroup>
+  <h1>Live</h1>
+  <p>Every tool call, from every session, as it happens.</p>
+</hgroup>
+
+<div id="live-sessions">{{template "live-sessions" .}}</div>
+
+<div id="live-rows">
+{{if not .Calls}}<article id="live-empty"><p>Waiting for the first call. Point an MCP host at agentgate and make one.</p></article>{{end}}
+{{template "live-rows" .}}
+</div>
+{{template "live-poller" .}}
+{{end}}
+
+{{define "live-poll"}}
+{{template "live-poller" .}}
+{{if .Calls}}<div hx-swap-oob="afterbegin:#live-rows">{{template "live-rows" .}}</div><div id="live-empty" hx-swap-oob="delete"></div>{{end}}
+<div id="live-sessions" hx-swap-oob="innerHTML">{{template "live-sessions" .}}</div>
+{{end}}
+
+{{define "live-poller"}}<div id="live-poller" hx-get="/partials/live?after={{.Seq}}" hx-trigger="every 1s" hx-swap="outerHTML"></div>{{end}}
+
+{{define "live-sessions"}}
+{{if .Live}}
+<div class="live-sessions">
+  {{range .Live}}
+  <a href="/sessions/{{.ID}}" class="live-session">
+    <span class="badge live">live</span>
+    <strong>{{if .HostName}}{{.HostName}}{{else}}unknown host{{end}}</strong>
+    <small class="muted">{{.Calls}} calls{{if .Denied}} · {{.Denied}} denied{{end}}</small>
+    {{range .Labels}}<span class="badge label">{{.}}</span>{{end}}
+  </a>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "live-rows"}}
+{{range .Calls}}
+<div class="live-row {{.Decision}}{{if .Shadow}} shadow{{end}}{{if isHoneypot .RuleID}} honeypot{{end}}{{if isCanary .RuleID}} honeypot{{end}}">
+  <small class="muted">{{ts .TS}}</small>
+  {{template "decision-badge" .}}
+  <a href="/calls/{{.ID}}"><code class="tool">{{.Tool}}</code></a>
+  <a href="/sessions/{{.SessionID}}" class="muted"><small>{{short .SessionID}}</small></a>
+  {{if .RuleID}}<small class="muted">{{.RuleID}}</small>{{end}}
+  {{range .Labels}}<span class="badge label">+{{.}}</span>{{end}}
+  {{if .Reason}}<small class="reason">{{.Reason}}</small>{{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "decision-badge"}}{{if isHoneypot .RuleID}}<span class="badge honeypot">honeypot</span>{{else if isCanary .RuleID}}<span class="badge honeypot">canary</span>{{else if isQuarantine .RuleID}}<span class="badge deny">quarantined</span>{{else if .Shadow}}<span class="badge shadow">shadow · would {{.Decision}}</span>{{else}}<span class="badge {{.Decision}}">{{.Decision}}</span>{{end}}{{end}}

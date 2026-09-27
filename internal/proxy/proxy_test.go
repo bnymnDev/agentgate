@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -26,6 +27,8 @@ type harness struct {
 	proxy  *Proxy
 	client *mcp.ClientSession
 	store  *audit.Store
+	// servers are the MCP servers behind each upstream, in config order.
+	servers []*mcp.Server
 }
 
 func setup(t *testing.T, configYAML string) *harness {
@@ -53,11 +56,14 @@ func setup(t *testing.T, configYAML string) *harness {
 	require.NoError(t, err)
 
 	// Put a real MCP server behind every configured upstream.
+	var servers []*mcp.Server
 	for _, u := range p.upstreams {
 		serverSide, clientSide := mcp.NewInMemoryTransports()
-		_, err := testserver.New().Connect(ctx, serverSide, nil)
+		srv := testserver.New()
+		_, err := srv.Connect(ctx, serverSide, nil)
 		require.NoError(t, err)
 		u.override = clientSide
+		servers = append(servers, srv)
 	}
 	require.NoError(t, p.Connect(ctx))
 
@@ -76,7 +82,7 @@ func setup(t *testing.T, configYAML string) *harness {
 		defer cancel()
 		store.Close(closeCtx)
 	})
-	return &harness{proxy: p, client: client, store: store}
+	return &harness{proxy: p, client: client, store: store, servers: servers}
 }
 
 const singleUpstream = `
@@ -311,6 +317,41 @@ policy:
 	require.Equal(t, "from b", textOf(t, res))
 }
 
+// TestUpstreamToolsFilter: a tool an upstream does not offer is not listed,
+// cannot be called, and is not pinned or recorded in the catalog.
+func TestUpstreamToolsFilter(t *testing.T) {
+	h := setup(t, `
+version: 1
+upstreams:
+  - name: web
+    stdio: ["unused-in-tests"]
+    tools: [fetch, "read_*"]
+  - name: mail
+    stdio: ["unused-in-tests"]
+    tools: ["!exec", "!write_file", "!query"]
+policy:
+  default: allow
+`)
+	ctx := context.Background()
+	tools, err := h.client.ListTools(ctx, nil)
+	require.NoError(t, err)
+	names := toolNames(tools)
+	require.Contains(t, names, "web__fetch")
+	require.Contains(t, names, "web__read_file")
+	require.NotContains(t, names, "web__echo")
+	require.NotContains(t, names, "web__exec")
+	require.Contains(t, names, "mail__send_message")
+	require.Contains(t, names, "mail__echo")
+	require.NotContains(t, names, "mail__exec")
+	require.NotContains(t, names, "mail__write_file")
+
+	_, err = h.client.CallTool(ctx, &mcp.CallToolParams{Name: "web__exec", Arguments: map[string]any{"command": "id"}})
+	require.Error(t, err, "a hidden tool is unknown to the host")
+	for _, b := range h.proxy.Tools() {
+		require.NotEqual(t, "web__exec", b.Exposed)
+	}
+}
+
 // TestTimeoutBecomesAToolError: agentgate's own deadline must not look like a
 // dead connection to the host.
 func TestTimeoutBecomesAToolError(t *testing.T) {
@@ -381,3 +422,40 @@ const (
 	timeoutShort = 3 * time.Second
 	pollShort    = 10 * time.Millisecond
 )
+
+// TestHTTPClientIsOneSession: over Streamable HTTP a host on the current
+// protocol discovers the server on a throwaway session and makes its calls on
+// another. The audit log must still show one session, with the host's name
+// and every call in it.
+func TestHTTPClientIsOneSession(t *testing.T) {
+	h := setup(t, singleUpstream)
+	srv := httptest.NewServer(h.proxy.HTTPHandler())
+	defer srv.Close()
+
+	ctx := context.Background()
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "http-host", Version: "3.0"}, nil).
+		Connect(ctx, &mcp.StreamableClientTransport{Endpoint: srv.URL}, nil)
+	require.NoError(t, err)
+	for _, text := range []string{"a", "b", "c"} {
+		res, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"text": text}})
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+	}
+	require.NoError(t, client.Close())
+
+	calls := waitForCalls(t, h.store, 3)
+	sessions, err := h.store.ListSessions(ctx, audit.SessionFilter{})
+	require.NoError(t, err)
+	var withHost []*audit.Session
+	for _, s := range sessions {
+		if s.HostName == "http-host" {
+			withHost = append(withHost, s)
+		}
+	}
+	require.Len(t, withHost, 1, "one host connection is one session")
+	require.Equal(t, 3, withHost[0].Calls)
+	require.Equal(t, withHost[0].ID, calls[0].SessionID)
+	for _, s := range sessions {
+		require.NotZero(t, s.Calls, "no empty session rows from discovery")
+	}
+}

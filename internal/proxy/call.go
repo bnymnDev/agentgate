@@ -15,6 +15,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 )
 
 // toolHandler returns the downstream handler for one proxied tool.
@@ -33,30 +34,41 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	args := req.Params.Arguments
 	signature := b.Exposed + "\x00" + audit.Hash(args)
+	counts, history := st.observe(b.Exposed, signature, started)
 	call := &policy.Call{
 		Tool:        b.Exposed,
 		Upstream:    b.Upstream,
 		ToolName:    b.Name,
 		Args:        decodeArgs(args, p.log),
-		Counts:      st.observe(b.Exposed, signature, started),
+		Counts:      counts,
 		Annotations: b.Annotations,
 		At:          started,
 		Frozen:      killswitch.Engaged(cfg.FreezeFile()),
+		Host:        policy.Host{Name: st.hostName, Version: st.hostVersion},
+		Session:     history,
+	}
+	// A canary on its way out is not a policy question: nothing legitimate
+	// ever sends one, in any mode.
+	if hit, ok := p.findCanary(args, call.Args); ok {
+		return p.canaryTripped(st, b, args, hit, started), nil
 	}
 	decision := policy.Evaluate(&cfg.Policy, call)
 
 	rec := &audit.Call{
-		ID:        audit.NewID(),
-		SessionID: st.id,
-		TS:        started,
-		Upstream:  b.Upstream,
-		Tool:      b.Exposed,
-		Args:      args,
+		ID:          audit.NewID(),
+		SessionID:   st.id,
+		TS:          started,
+		Upstream:    b.Upstream,
+		Tool:        b.Exposed,
+		Args:        args,
+		CatalogHash: p.catalogHash(),
 	}
 	event := Event{At: started, SessionID: st.id, Host: hostLabel(st), Upstream: b.Upstream, Tool: b.Exposed, Args: args}
 
-	if decision.Action != policy.ActionAllow && cfg.Policy.IsShadow() {
+	if decision.Action != policy.ActionAllow && cfg.Policy.IsShadow() && decision.RuleID != policy.RuleFrozen {
 		// Shadow mode: the record keeps the verdict, the call goes through.
+		// The kill switch is the exception; it is not part of the policy
+		// being tried out, and a frozen gateway stays frozen.
 		rec.Shadow = true
 		rec.Decision, rec.RuleID, rec.Reason = decision.Action, decision.RuleID, decision.Reason
 		p.log.Info("shadow: would have "+verb(decision.Action),
@@ -79,7 +91,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		rec.DurationMS = time.Since(started).Milliseconds()
 		result := deniedResult(decision)
 		rec.Result = marshalResult(result)
-		p.store.RecordCall(rec)
+		p.record(st, rec)
 		p.log.Info("call denied",
 			"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
 		event.Event, event.Decision = config.EventDeny, decision
@@ -106,8 +118,8 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		rec.Error = timeoutErr.Error()
 		result = errorResult("agentgate: " + timeoutErr.Error())
 		rec.Result = marshalResult(result)
-		st.forwarded(b.Exposed, audit.TokensEst(args), started)
-		p.store.RecordCall(rec)
+		rec.Labels = p.forwarded(&cfg.Policy, st, call, nil, audit.TokensEst(args), started)
+		p.record(st, rec)
 		p.log.Warn("call timed out", "session", st.id, "tool", b.Exposed, "timeout", timeout.String())
 		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: timeoutErr.Error()}
 		p.notify.emit(event)
@@ -116,13 +128,19 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		// A genuine protocol error from the upstream is passed through as one.
 		rec.IsError = true
 		rec.Error = err.Error()
-		st.forwarded(b.Exposed, audit.TokensEst(args), started)
-		p.store.RecordCall(rec)
+		rec.Labels = p.forwarded(&cfg.Policy, st, call, nil, audit.TokensEst(args), started)
+		p.record(st, rec)
 		p.log.Warn("call failed", "session", st.id, "tool", b.Exposed, "error", err)
 		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: err.Error()}
 		p.notify.emit(event)
 		return nil, err
 	}
+
+	// The record keeps the result as the upstream sent it: that is the
+	// evidence, whatever is changed below for the agent's benefit.
+	rec.Result = marshalResult(result)
+	rec.IsError = result != nil && result.IsError
+	builtin := p.inspectResult(st, b, rec.Result)
 
 	if cfg.Policy.RedactResults {
 		if n := p.redactResult(result); n > 0 {
@@ -130,12 +148,34 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 				"session", st.id, "tool", b.Exposed, "replacements", n)
 		}
 	}
+	if cfg.Policy.StripInvisible {
+		if n := stripInvisible(result); n > 0 {
+			p.log.Info("removed invisible characters from a tool result before the agent saw it",
+				"session", st.id, "tool", b.Exposed, "characters", n)
+		}
+	}
 
-	rec.Result = marshalResult(result)
-	rec.IsError = result != nil && result.IsError
-	st.forwarded(b.Exposed, audit.TokensEst(args, rec.Result), started)
-	p.store.RecordCall(rec)
+	rec.Labels = p.forwarded(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
+	p.record(st, rec)
 	return result, nil
+}
+
+// forwarded books a call that reached its upstream against the session and
+// applies the policy's label rules to it, next to the labels agentgate
+// attaches itself. It returns the labels the session earned with this call.
+func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time, builtin ...string) []string {
+	labels := builtin
+	if len(pol.Labels) > 0 {
+		if pol.LabelsReadResult() {
+			call.Result = policy.ResultFromJSON(result)
+		}
+		labels = append(labels, policy.LabelsFor(pol, call)...)
+	}
+	added := st.forwarded(call, tokens, at, labels)
+	if len(added) > 0 {
+		p.log.Info("session labelled", "session", st.id, "tool", call.Tool, "labels", strings.Join(added, ","))
+	}
+	return added
 }
 
 // verb is the past tense the shadow-mode messages use.
@@ -166,6 +206,9 @@ func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
 	for i, c := range res.Content {
 		switch t := c.(type) {
 		case *mcp.TextContent:
+			if p.keepsCanary(t.Text) {
+				continue
+			}
 			if out := r.RedactString(t.Text); out != t.Text {
 				n += strings.Count(out, audit.Placeholder) - strings.Count(t.Text, audit.Placeholder)
 				clone := *t
@@ -173,7 +216,7 @@ func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
 				res.Content[i] = &clone
 			}
 		case *mcp.EmbeddedResource:
-			if t.Resource != nil && t.Resource.Text != "" {
+			if t.Resource != nil && t.Resource.Text != "" && !p.keepsCanary(t.Resource.Text) {
 				if out := r.RedactString(t.Resource.Text); out != t.Resource.Text {
 					n += strings.Count(out, audit.Placeholder) - strings.Count(t.Resource.Text, audit.Placeholder)
 					resource := *t.Resource
@@ -187,7 +230,7 @@ func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
 	}
 	if res.StructuredContent != nil {
 		raw, err := json.Marshal(res.StructuredContent)
-		if err == nil {
+		if err == nil && !p.keepsCanary(string(raw)) {
 			if out := r.Redact(raw); !bytes.Equal(out, raw) {
 				var v any
 				if json.Unmarshal(out, &v) == nil {
@@ -341,4 +384,31 @@ func (p *Proxy) ForwardJSON(ctx context.Context, exposed string, args json.RawMe
 		return nil, err
 	}
 	return json.Marshal(result)
+}
+
+// record writes a call to the audit log and hands it to the telemetry
+// exporter. Every call agentgate answers goes through here, whatever
+// answered it.
+func (p *Proxy) record(st *sessionState, rec *audit.Call) {
+	p.store.RecordCall(rec)
+	if p.telemetry == nil {
+		return
+	}
+	p.telemetry.Export(telemetry.Span{
+		CallID:      rec.ID,
+		SessionID:   rec.SessionID,
+		Tool:        rec.Tool,
+		Upstream:    rec.Upstream,
+		HostName:    st.hostName,
+		HostVersion: st.hostVersion,
+		Start:       rec.TS,
+		Duration:    time.Duration(rec.DurationMS) * time.Millisecond,
+		Decision:    string(rec.Decision),
+		RuleID:      rec.RuleID,
+		Reason:      rec.Reason,
+		IsError:     rec.IsError,
+		Error:       rec.Error,
+		Shadow:      rec.Shadow,
+		Labels:      rec.Labels,
+	})
 }

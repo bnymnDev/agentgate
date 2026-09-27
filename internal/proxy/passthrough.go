@@ -28,17 +28,23 @@ func (p *Proxy) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 			res, err := next(ctx, method, req)
 			p.mirrorRoots(ctx, req.GetSession())
 			return res, err
+		case "tools/call":
+			if res, held := p.onQuarantinedCall(req); held {
+				return res, nil
+			}
 		}
 		return next(ctx, method, req)
 	}
 }
 
 // onInitialize lets the SDK do the handshake and then opens the audit session,
-// so that the session row carries the real host name and version. Hosts on
-// protocol 2026-07-28 and later open with server/discover instead of
-// initialize; either way the SDK leaves the client's identity on the session
-// once the handshake is through, so it is read from there rather than from
-// the request.
+// so that the session row carries the real host name and version.
+//
+// Hosts on protocol 2026-07-28 and later open with server/discover instead
+// of initialize. Discovery is stateless: over Streamable HTTP it runs on a
+// throwaway session of its own, and the tool calls that follow arrive on
+// another. So a discover opens no audit session; the session is opened by
+// the first call made on it, with the host taken from that call's _meta.
 func (p *Proxy) onInitialize(ctx context.Context, method string, req mcp.Request, next mcp.MethodHandler) (mcp.Result, error) {
 	res, err := next(ctx, method, req)
 	if err != nil {
@@ -48,18 +54,20 @@ func (p *Proxy) onInitialize(ctx context.Context, method string, req mcp.Request
 	if !ok {
 		return res, nil
 	}
-	var client *mcp.Implementation
-	if init := ss.InitializeParams(); init != nil {
-		client = init.ClientInfo
-	}
-	st := newSessionState(p.catalog.transport)
-	if _, dup := p.sessions.LoadOrStore(ss, st); !dup {
-		p.recordSessionStart(ss, st, client)
+	if method == "initialize" {
+		var client *mcp.Implementation
+		if init := ss.InitializeParams(); init != nil {
+			client = init.ClientInfo
+		}
+		st := newSessionState(p.catalog.transport)
+		if _, dup := p.sessions.LoadOrStore(ss, st); !dup {
+			p.recordSessionStart(ss, st, client)
+		}
 	}
 	// Roots are a client feature; mirroring them upstream is what lets a
 	// filesystem server behind agentgate see the same workspace the host sees.
 	// It has to happen off this goroutine: roots/list is a request back to the
-	// host, which cannot answer while it is still waiting for initialize.
+	// host, which cannot answer while it is still waiting for the handshake.
 	p.wg.Add(1)
 	go func() {
 		defer p.wg.Done()
@@ -264,6 +272,5 @@ func newSessionState(transport string) *sessionState {
 		id:        audit.NewID(),
 		transport: transport,
 		startedAt: time.Now(),
-		perTool:   map[string]int{},
 	}
 }

@@ -38,6 +38,7 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]*Session, 
 	args = append(args, limit)
 	q := fmt.Sprintf(`
 		SELECT s.id, s.started_at, s.ended_at, s.host_name, s.host_version, s.downstream_transport,
+		       s.catalog_hash,
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id),
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id AND c.decision = 'deny')
 		FROM sessions s %s
@@ -70,7 +71,7 @@ func scanSession(sc scanner) (*Session, error) {
 		ended   sql.NullInt64
 	)
 	if err := sc.Scan(&sess.ID, &started, &ended, &sess.HostName, &sess.HostVersion,
-		&sess.DownstreamTransport, &sess.Calls, &sess.Denied); err != nil {
+		&sess.DownstreamTransport, &sess.CatalogHash, &sess.Calls, &sess.Denied); err != nil {
 		return nil, err
 	}
 	sess.StartedAt = time.UnixMilli(started)
@@ -86,6 +87,7 @@ func scanSession(sc scanner) (*Session, error) {
 func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT s.id, s.started_at, s.ended_at, s.host_name, s.host_version, s.downstream_transport,
+		       s.catalog_hash,
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id),
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id AND c.decision = 'deny')
 		FROM sessions s
@@ -134,6 +136,12 @@ type CallFilter struct {
 	Since time.Time
 	// RuleID keeps only calls decided by this rule id.
 	RuleID string
+	// SeqAfter keeps only calls recorded after this link of the hash chain,
+	// in the order they were recorded. It is what a live view follows: a
+	// slow call that started early is still picked up when it finishes.
+	SeqAfter *int64
+	// Newest returns the most recent calls first.
+	Newest bool
 	Limit  int
 }
 
@@ -167,6 +175,15 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 		conds = append(conds, "rule_id = ?")
 		args = append(args, f.RuleID)
 	}
+	order := "ts ASC, id ASC"
+	switch {
+	case f.SeqAfter != nil:
+		conds = append(conds, "seq > ?")
+		args = append(args, *f.SeqAfter)
+		order = "seq ASC"
+	case f.Newest:
+		order = "ts DESC, id DESC"
+	}
 	where := ""
 	if len(conds) > 0 {
 		where = "WHERE " + strings.Join(conds, " AND ")
@@ -177,10 +194,8 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
-		       reason, result_json, result_hash, is_error, duration_ms, tokens_est,
-		       result_truncated, error, shadow
-		FROM calls %s ORDER BY ts ASC, id ASC LIMIT ?`, where), args...)
+		SELECT `+callColumns+`
+		FROM calls %s ORDER BY %s LIMIT ?`, where, order), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -198,17 +213,18 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 
 // GetCall looks up a single call by id.
 func (s *Store) GetCall(ctx context.Context, id string) (*Call, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
-		       reason, result_json, result_hash, is_error, duration_ms, tokens_est,
-		       result_truncated, error, shadow
-		FROM calls WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+callColumns+` FROM calls WHERE id = ?`, id)
 	c, err := scanCall(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("call %q: %w", id, ErrNotFound)
 	}
 	return c, err
 }
+
+// callColumns is the column list scanCall reads, in its order.
+const callColumns = `id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
+	reason, result_json, result_hash, is_error, duration_ms, tokens_est,
+	result_truncated, error, shadow, labels, catalog_hash, seq, prev_hash, row_hash`
 
 func scanCall(sc scanner) (*Call, error) {
 	var (
@@ -220,10 +236,13 @@ func scanCall(sc scanner) (*Call, error) {
 		isErr      int
 		truncated  int
 		shadow     int
+		labels     string
+		seq        sql.NullInt64
 	)
 	if err := sc.Scan(&c.ID, &c.SessionID, &ts, &c.Upstream, &c.Tool, &argsJSON, &c.ArgsHash,
 		&decision, &c.RuleID, &c.Reason, &resultJSON, &c.ResultHash, &isErr,
-		&c.DurationMS, &c.TokensEst, &truncated, &c.Error, &shadow); err != nil {
+		&c.DurationMS, &c.TokensEst, &truncated, &c.Error, &shadow,
+		&labels, &c.CatalogHash, &seq, &c.PrevHash, &c.RowHash); err != nil {
 		return nil, err
 	}
 	c.TS = time.UnixMilli(ts)
@@ -231,6 +250,10 @@ func scanCall(sc scanner) (*Call, error) {
 	c.IsError = isErr != 0
 	c.ResultTruncated = truncated != 0
 	c.Shadow = shadow != 0
+	c.Seq = seq.Int64
+	if labels != "" {
+		c.Labels = strings.Split(labels, ",")
+	}
 	if argsJSON != "" {
 		c.Args = json.RawMessage(argsJSON)
 	}
@@ -247,8 +270,12 @@ type Stats struct {
 	Denied    int `json:"denied"`
 	Shadowed  int `json:"shadowed"`
 	Honeypots int `json:"honeypots"`
-	Errors    int `json:"errors"`
-	Tokens    int `json:"tokens_est"`
+	// Canaries counts calls stopped for carrying a canary out.
+	Canaries int `json:"canaries"`
+	// Quarantined counts calls to tools held back by pinning.
+	Quarantined int `json:"quarantined"`
+	Errors      int `json:"errors"`
+	Tokens      int `json:"tokens_est"`
 }
 
 // Stats aggregates the database, or the part of it since a time.
@@ -264,10 +291,12 @@ func (s *Store) Stats(ctx context.Context, since time.Time) (*Stats, error) {
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND decision = 'deny' AND shadow = 0),
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND shadow = 1),
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND rule_id = ?),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND rule_id = ?),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND rule_id = ?),
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND is_error = 1 AND decision = 'allow'),
 		       (SELECT COALESCE(SUM(tokens_est), 0) FROM calls WHERE ts >= ?)`,
-		cut, cut, cut, cut, cut, policy.RuleHoneypot, cut, cut).
-		Scan(&st.Sessions, &st.Calls, &st.Denied, &st.Shadowed, &st.Honeypots, &st.Errors, &st.Tokens)
+		cut, cut, cut, cut, cut, policy.RuleHoneypot, cut, policy.RuleCanary, cut, policy.RuleQuarantine, cut, cut).
+		Scan(&st.Sessions, &st.Calls, &st.Denied, &st.Shadowed, &st.Honeypots, &st.Canaries, &st.Quarantined, &st.Errors, &st.Tokens)
 	if err != nil {
 		return nil, err
 	}

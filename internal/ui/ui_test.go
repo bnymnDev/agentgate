@@ -89,6 +89,9 @@ func TestPagesRender(t *testing.T) {
 		"/approvals",
 		"/partials/approvals",
 		"/healthz",
+		"/live",
+		"/partials/live?after=0",
+		"/tools",
 		"/static/pico.min.css",
 		"/static/htmx.min.js",
 		"/static/agentgate.css",
@@ -273,4 +276,63 @@ func TestApprovalButtons(t *testing.T) {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/approvals/x/maybe", nil))
 	require.Equal(t, http.StatusBadRequest, rec.Code, "an unknown verb is rejected, not treated as deny")
+}
+
+// The live page polls for what was recorded since the last poll, and only
+// that.
+func TestLivePolling(t *testing.T) {
+	h, _ := newTestServer(t)
+	page := get(t, h, "/live").Body.String()
+	require.Contains(t, page, "fs__write_file", "the backlog is shown")
+	require.Contains(t, page, `hx-get="/partials/live?after=1"`, "the poller continues from the head of the chain")
+
+	first := get(t, h, "/partials/live?after=0").Body.String()
+	require.Contains(t, first, "fs__write_file")
+	require.Contains(t, first, `after=1`)
+	later := get(t, h, "/partials/live?after=1").Body.String()
+	require.NotContains(t, later, "fs__write_file", "nothing new since seq 1")
+	require.Contains(t, later, `id="live-poller"`)
+}
+
+type stubTools struct {
+	reports []proxy.ToolReport
+	trusted []string
+}
+
+func (s *stubTools) ToolReports() []proxy.ToolReport { return s.reports }
+func (s *stubTools) Trust(_ context.Context, tool string) ([]proxy.ToolReport, error) {
+	s.trusted = append(s.trusted, tool)
+	return s.reports[:1], nil
+}
+
+func TestToolsPage(t *testing.T) {
+	ctx := context.Background()
+	cfg, err := config.Parse([]byte("upstreams:\n  - name: demo\n    stdio: [\"true\"]\npinning:\n  mode: enforce\n  lockfile: /tmp/x.lock\n"))
+	require.NoError(t, err)
+	cfg.Audit.Path = filepath.Join(t.TempDir(), "audit.db")
+	store, err := audit.Open(ctx, audit.Options{Path: cfg.Audit.Path})
+	require.NoError(t, err)
+	defer store.Close(ctx)
+
+	tools := &stubTools{}
+	report := proxy.ToolReport{Exposed: "echo", Quarantined: true, Reason: "its definition changed since it was pinned"}
+	report.Upstream, report.Tool, report.Status = "demo", "echo", "changed"
+	report.Current.Description = "Echo." + string(rune(0xE0041)) + string(rune(0xE0042))
+	tools.reports = []proxy.ToolReport{report}
+	srv, err := New(Options{Store: store, Config: func() *config.Config { return cfg }, Tools: tools, Version: "test"})
+	require.NoError(t, err)
+	h := srv.Handler()
+
+	page := get(t, h, "/tools").Body.String()
+	require.Contains(t, page, "quarantined")
+	require.Contains(t, page, "«hidden: AB»", "hidden text is spelled out")
+	require.Contains(t, page, "Trust as it is now")
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/tools/trust", strings.NewReader("tool=demo.echo"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, []string{"demo.echo"}, tools.trusted)
+	require.Contains(t, rec.Body.String(), "Trusted demo.echo")
 }

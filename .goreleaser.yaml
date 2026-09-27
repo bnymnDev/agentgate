@@ -74,7 +74,7 @@ homebrew_casks:
       email: 88560587+bnymnDev@users.noreply.github.com
     commit_msg_template: "chore(brew): cask for {{ .ProjectName }} {{ .Tag }}"
     homepage: https://github.com/bnymnDev/agentgate
-    description: Firewall, kill switch and flight recorder for your AI agent's tools
+    description: Firewall, tripwires and flight recorder for your AI agent's tools
     license: GPL-3.0-or-later
     binaries: [agentgate]
     skip_upload: auto
@@ -87,6 +87,23 @@ homebrew_casks:
             system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/agentgate"]
           end
 
+# Container images for linux/amd64 and linux/arm64 on GitHub's registry.
+dockers_v2:
+  - images:
+      - ghcr.io/bnymndev/agentgate
+    tags:
+      - "{{ .Version }}"
+      - "{{ if not .Prerelease }}latest{{ end }}"
+    dockerfile: build/release.Dockerfile
+    platforms: [linux/amd64, linux/arm64]
+    labels:
+      org.opencontainers.image.title: agentgate
+      org.opencontainers.image.description: Firewall, tripwires and flight recorder for your AI agent's tools
+      org.opencontainers.image.source: https://github.com/bnymnDev/agentgate
+      org.opencontainers.image.version: "{{ .Version }}"
+      org.opencontainers.image.revision: "{{ .FullCommit }}"
+      org.opencontainers.image.licenses: GPL-3.0-or-later
+
 release:
   footer: |
     ## Install
@@ -96,4 +113,6 @@ release:
 
     brew tap bnymnDev/agentgate https://github.com/bnymnDev/agentgate
     brew install --cask agentgate
+
+    docker pull ghcr.io/bnymndev/agentgate:{{ .Version }}
     ```
