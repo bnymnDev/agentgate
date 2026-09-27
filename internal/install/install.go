@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"time"
+
+	"github.com/bnymnDev/agentgate/internal/policytest"
 )
 
 // EntryName is the name of the one server entry agentgate leaves in a host's
@@ -169,6 +171,14 @@ func Apply(c Candidate, manifest *Manifest, opts Options) (*Installed, error) {
 	if err := writeFileAtomic(cfgPath, []byte(GenerateConfig(c, opts)), 0o600); err != nil {
 		return nil, err
 	}
+	// Starter tests for the policy, next to it; an earlier set, perhaps
+	// with the user's own tests added, is left alone.
+	testsPath := policytest.DefaultPath(cfgPath)
+	if _, err := os.Stat(testsPath); errors.Is(err, os.ErrNotExist) {
+		if err := writeFileAtomic(testsPath, []byte(GenerateTests(cfgPath)), 0o600); err != nil {
+			return nil, err
+		}
+	}
 
 	servers, err := readObject(original)
 	if err != nil {
@@ -275,6 +285,37 @@ func upstreamName(s string, taken map[string]bool) string {
 	}
 	taken[name] = true
 	return name
+}
+
+// GenerateTests writes starter policy tests for a config GenerateConfig
+// wrote: what its packs must stop, and one thing they must let through.
+func GenerateTests(cfgPath string) string {
+	return "# Written by `agentgate init`: tests for the policy in " + filepath.Base(cfgPath) + `.
+# Run them with: agentgate test -c ` + cfgPath + `
+# Each test is a call and the decision it has to get. Add your own, and a
+# change to the policy that lets through what it should stop fails them.
+tests:
+  - name: a recursive delete of the home directory is denied
+    call: { tool: shell.exec, args: { command: "rm -rf ~" } }
+    expect: deny
+
+  - name: an SSH private key stays out of reach
+    call: { tool: fs.read_file, args: { path: "~/.ssh/id_ed25519" } }
+    expect: deny
+
+  - name: a force-push to main is denied
+    call: { tool: shell.exec, args: { command: "git push --force origin main" } }
+    expect: deny
+
+  - name: after hidden instructions in a result, nothing leaves the session
+    labels: [injection-suspected]
+    call: { tool: mail.send_email, args: { to: someone@example.com, body: hello } }
+    expect: deny
+
+  - name: reading a file in the project goes through
+    call: { tool: fs.read_file, args: { path: README.md } }
+    expect: allow
+`
 }
 
 // GenerateConfig writes the agentgate config for a host: its servers as

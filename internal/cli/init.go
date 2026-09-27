@@ -81,6 +81,7 @@ puts everything back. Without --yes, init only shows what it would do.`,
 					fmt.Fprintf(out, "  - write %s for %s, with its servers as upstreams, in shadow mode,\n",
 						filepath.Join(home, c.Host.Name+".yaml"), c.Host.Title)
 				}
+				fmt.Fprintln(out, "    and starter tests for its policy next to it,")
 				fmt.Fprintln(out, "  - replace those servers in the host's config with one entry that runs agentgate,")
 				fmt.Fprintf(out, "  - keep the originals in %s so agentgate uninstall can put them back.\n", filepath.Join(home, "installed.json"))
 				return nil
@@ -100,8 +101,9 @@ puts everything back. Without --yes, init only shows what it would do.`,
 				fmt.Fprintf(out, "%s: %d server(s) now behind agentgate, config %s\n", c.Host.Title, len(c.Wrapped), inst.Config)
 			}
 			fmt.Fprintln(out, "\nRestart the host(s) so they start agentgate. Then watch what the agent does:")
-			fmt.Fprintln(out, "  agentgate tail -c "+filepath.Join(home, picked[0].Host.Name+".yaml"))
+			fmt.Fprintln(out, "  agentgate tail  -c "+filepath.Join(home, picked[0].Host.Name+".yaml"))
 			fmt.Fprintln(out, "  agentgate stats -c "+filepath.Join(home, picked[0].Host.Name+".yaml"))
+			fmt.Fprintln(out, "  agentgate test  -c "+filepath.Join(home, picked[0].Host.Name+".yaml")+"   # the policy's tests")
 			fmt.Fprintln(out, "The policy is in shadow mode; switch it to enforce when you are happy with what it would block.")
 			return nil
 		},

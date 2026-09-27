@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/policytest"
 )
 
 const desktopConfig = `{
@@ -99,6 +100,13 @@ func TestInstallAndUninstall(t *testing.T) {
 	require.Equal(t, "ghp_example<&>", cfg.Upstreams[1].Env["GITHUB_PERSONAL_ACCESS_TOKEN"])
 	require.Equal(t, "https://mcp.example.com/mcp", cfg.Upstreams[2].HTTP)
 	require.True(t, cfg.Policy.IsShadow())
+
+	// Next to it, starter tests for its policy, and they pass.
+	tests, err := policytest.Load(policytest.DefaultPath(inst.Config))
+	require.NoError(t, err)
+	for _, o := range policytest.Run(tests, policytest.Options{Config: cfg}) {
+		require.True(t, o.Passed, "%s: %v", o.Name, o.Problems)
+	}
 	if runtime.GOOS != "windows" { // Windows has no permission bits to check
 		info, err := os.Stat(inst.Config)
 		require.NoError(t, err)
