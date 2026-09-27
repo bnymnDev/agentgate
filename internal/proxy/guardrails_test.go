@@ -254,3 +254,71 @@ policy:
 	require.Equal(t, "exec", generic.Tool)
 	require.Equal(t, "no-rm-rf", generic.Decision.RuleID)
 }
+
+// TestSessionLabels: a label is earned once a matching call has gone
+// through, later rules in the same session can see it, and a new session
+// starts clean.
+func TestSessionLabels(t *testing.T) {
+	h := setup(t, `
+version: 1
+approval:
+  mode: deny
+upstreams:
+  - name: demo
+    stdio: ["unused-in-tests"]
+policy:
+  default: allow
+  packs: [lethal-trifecta]
+  labels:
+    - label: saw-hello
+      tool: "echo"
+      when:
+        result.text: { regex: hello }
+  rules:
+    - id: after-hello
+      tool: "exec"
+      when:
+        session.label.saw-hello: true
+      action: deny
+      reason: "hello was seen"
+    - id: tests-first
+      tool: "write_file"
+      when:
+        session.called: { excludes: "demo.add" }
+      action: deny
+      reason: "add first"
+`)
+	require.False(t, call(t, h, "exec", map[string]any{"command": "ls"}).IsError)
+	require.False(t, call(t, h, "echo", map[string]any{"text": "goodbye"}).IsError)
+	require.False(t, call(t, h, "exec", map[string]any{"command": "ls"}).IsError, "the label depends on the result")
+	require.False(t, call(t, h, "echo", map[string]any{"text": "hello there"}).IsError)
+	res := call(t, h, "exec", map[string]any{"command": "ls"})
+	require.True(t, res.IsError)
+	require.Contains(t, textOf(t, res), "hello was seen")
+
+	// session.called uses both spellings of a tool name.
+	require.Contains(t, textOf(t, call(t, h, "write_file", map[string]any{"path": "/tmp/x"})), "add first")
+	require.False(t, call(t, h, "add", map[string]any{"a": 1, "b": 2}).IsError)
+	require.False(t, call(t, h, "write_file", map[string]any{"path": "/tmp/x"}).IsError)
+
+	// The lethal trifecta: once the session has read a web page, sending
+	// anything out needs a human, and approval mode deny says no.
+	require.False(t, call(t, h, "send_message", map[string]any{"to": "a@example.com", "body": "hi"}).IsError)
+	require.False(t, call(t, h, "fetch", map[string]any{"url": "https://example.com"}).IsError)
+	res = call(t, h, "send_message", map[string]any{"to": "a@example.com", "body": "hi"})
+	require.True(t, res.IsError)
+	require.Contains(t, textOf(t, res), "lethal-trifecta/egress-after-untrusted")
+
+	// Labels are per session.
+	second := connectSecondClient(t, h)
+	res2, err := second.CallTool(context.Background(), &mcp.CallToolParams{Name: "exec", Arguments: map[string]any{"command": "ls"}})
+	require.NoError(t, err)
+	require.False(t, res2.IsError)
+
+	calls := waitForCalls(t, h.store, 11)
+	var labelled []string
+	for _, c := range calls {
+		labelled = append(labelled, c.Labels...)
+	}
+	require.ElementsMatch(t, []string{"saw-hello", "untrusted-input"}, labelled, "the audit log says which call earned which label")
+}

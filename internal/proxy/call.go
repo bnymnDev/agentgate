@@ -33,25 +33,29 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	args := req.Params.Arguments
 	signature := b.Exposed + "\x00" + audit.Hash(args)
+	counts, history := st.observe(b.Exposed, signature, started)
 	call := &policy.Call{
 		Tool:        b.Exposed,
 		Upstream:    b.Upstream,
 		ToolName:    b.Name,
 		Args:        decodeArgs(args, p.log),
-		Counts:      st.observe(b.Exposed, signature, started),
+		Counts:      counts,
 		Annotations: b.Annotations,
 		At:          started,
 		Frozen:      killswitch.Engaged(cfg.FreezeFile()),
+		Host:        policy.Host{Name: st.hostName, Version: st.hostVersion},
+		Session:     history,
 	}
 	decision := policy.Evaluate(&cfg.Policy, call)
 
 	rec := &audit.Call{
-		ID:        audit.NewID(),
-		SessionID: st.id,
-		TS:        started,
-		Upstream:  b.Upstream,
-		Tool:      b.Exposed,
-		Args:      args,
+		ID:          audit.NewID(),
+		SessionID:   st.id,
+		TS:          started,
+		Upstream:    b.Upstream,
+		Tool:        b.Exposed,
+		Args:        args,
+		CatalogHash: p.catalogHash(),
 	}
 	event := Event{At: started, SessionID: st.id, Host: hostLabel(st), Upstream: b.Upstream, Tool: b.Exposed, Args: args}
 
@@ -106,7 +110,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		rec.Error = timeoutErr.Error()
 		result = errorResult("agentgate: " + timeoutErr.Error())
 		rec.Result = marshalResult(result)
-		st.forwarded(b.Exposed, audit.TokensEst(args), started)
+		rec.Labels = p.forwarded(&cfg.Policy, st, call, nil, audit.TokensEst(args), started)
 		p.store.RecordCall(rec)
 		p.log.Warn("call timed out", "session", st.id, "tool", b.Exposed, "timeout", timeout.String())
 		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: timeoutErr.Error()}
@@ -116,7 +120,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		// A genuine protocol error from the upstream is passed through as one.
 		rec.IsError = true
 		rec.Error = err.Error()
-		st.forwarded(b.Exposed, audit.TokensEst(args), started)
+		rec.Labels = p.forwarded(&cfg.Policy, st, call, nil, audit.TokensEst(args), started)
 		p.store.RecordCall(rec)
 		p.log.Warn("call failed", "session", st.id, "tool", b.Exposed, "error", err)
 		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: err.Error()}
@@ -133,9 +137,27 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	rec.Result = marshalResult(result)
 	rec.IsError = result != nil && result.IsError
-	st.forwarded(b.Exposed, audit.TokensEst(args, rec.Result), started)
+	rec.Labels = p.forwarded(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started)
 	p.store.RecordCall(rec)
 	return result, nil
+}
+
+// forwarded books a call that reached its upstream against the session and
+// applies the policy's label rules to it. It returns the labels the session
+// earned with this call.
+func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time) []string {
+	var labels []string
+	if len(pol.Labels) > 0 {
+		if pol.LabelsReadResult() {
+			call.Result = policy.ResultFromJSON(result)
+		}
+		labels = policy.LabelsFor(pol, call)
+	}
+	added := st.forwarded(call, tokens, at, labels)
+	if len(added) > 0 {
+		p.log.Info("session labelled", "session", st.id, "tool", call.Tool, "labels", strings.Join(added, ","))
+	}
+	return added
 }
 
 // verb is the past tense the shadow-mode messages use.

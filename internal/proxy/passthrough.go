@@ -264,6 +264,5 @@ func newSessionState(transport string) *sessionState {
 		id:        audit.NewID(),
 		transport: transport,
 		startedAt: time.Now(),
-		perTool:   map[string]int{},
 	}
 }

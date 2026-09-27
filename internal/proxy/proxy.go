@@ -77,18 +77,8 @@ type sessionState struct {
 	hostVersion string
 
 	mu       sync.Mutex
-	calls    int
-	perTool  map[string]int
+	track    policy.Tracker
 	finished bool
-	// recent holds the times of allowed calls in the trailing minute, for the
-	// rate limit.
-	recent []time.Time
-	// lastSig and streak drive the loop guard: how many times in a row the
-	// identical call (tool plus argument hash) has just been made.
-	lastSig string
-	streak  int
-	// tokens is the estimated token volume pushed through tools so far.
-	tokens int
 	// approved holds the tools a human allowed for the rest of the session.
 	approved map[string]bool
 }
@@ -110,44 +100,21 @@ func (st *sessionState) rememberApproval(tool string) {
 	st.approved[tool] = true
 }
 
-// observe notes that a call is being evaluated and returns the counters the
-// evaluator needs, as they stood before this call.
-func (st *sessionState) observe(tool, sig string, now time.Time) policy.Counts {
+// observe notes that a call is being evaluated and returns what the evaluator
+// needs to know about the session, as it stood before this call.
+func (st *sessionState) observe(tool, sig string, now time.Time) (policy.Counts, policy.History) {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	repeats := 0
-	if sig == st.lastSig {
-		repeats = st.streak
-		st.streak++
-	} else {
-		st.lastSig = sig
-		st.streak = 1
-	}
-	cutoff := now.Add(-time.Minute)
-	keep := st.recent[:0]
-	for _, t := range st.recent {
-		if t.After(cutoff) {
-			keep = append(keep, t)
-		}
-	}
-	st.recent = keep
-	return policy.Counts{
-		Session:    st.calls,
-		Tool:       st.perTool[tool],
-		LastMinute: len(st.recent),
-		Repeats:    repeats,
-		Tokens:     st.tokens,
-	}
+	return st.track.Observe(tool, sig, now), st.track.History()
 }
 
-// forwarded records that a call went upstream and what it cost.
-func (st *sessionState) forwarded(tool string, tokens int, now time.Time) {
+// forwarded records that a call went upstream and what it cost, and adds the
+// labels it earned. It returns the labels the session did not have before.
+func (st *sessionState) forwarded(call *policy.Call, tokens int, now time.Time, labels []string) []string {
 	st.mu.Lock()
 	defer st.mu.Unlock()
-	st.calls++
-	st.perTool[tool]++
-	st.recent = append(st.recent, now)
-	st.tokens += tokens
+	st.track.Forwarded(call, tokens, now)
+	return st.track.Earn(labels...)
 }
 
 // hostInfo records who connected. It is called once, before the session is
@@ -420,6 +387,7 @@ func (p *Proxy) recordSessionStart(ss *mcp.ServerSession, st *sessionState, clie
 			HostName:            st.hostName,
 			HostVersion:         st.hostVersion,
 			DownstreamTransport: st.transport,
+			CatalogHash:         p.catalogHash(),
 		}
 		if err := p.store.StartSession(ctx, rec); err != nil {
 			p.log.Warn("audit: cannot open session", "session", st.id, "error", err)
@@ -450,7 +418,7 @@ func (p *Proxy) endSession(ss *mcp.ServerSession) {
 		return
 	}
 	st.finished = true
-	calls := st.calls
+	calls := st.track.Calls()
 	st.mu.Unlock()
 
 	if p.store != nil {
