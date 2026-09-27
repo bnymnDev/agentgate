@@ -6,6 +6,7 @@
     {{ts .Session.StartedAt}} · {{dur .Session.Duration}} · {{.Session.Calls}} calls
     {{if .Session.Denied}}· <span class="badge deny">{{.Session.Denied}} denied</span>{{end}}
   </p>
+  {{if .Labels}}<p>{{range .Labels}}<span class="badge label">{{.}}</span> {{end}}</p>{{end}}
 </hgroup>
 
 <form role="search" hx-get="/partials/calls" hx-target="#call-list" hx-trigger="change, submit, keyup changed delay:300ms from:input[name='tool']">
@@ -30,13 +31,14 @@
   <article><p>No calls match.</p></article>
 {{else}}
 {{range .Calls}}
-<details class="call {{.Decision}}{{if .Shadow}} shadow{{end}}{{if isHoneypot .RuleID}} honeypot{{end}}">
+<details class="call {{.Decision}}{{if .Shadow}} shadow{{end}}{{if or (isHoneypot .RuleID) (isCanary .RuleID)}} honeypot{{end}}">
   <summary>
-    {{if isHoneypot .RuleID}}<span class="badge honeypot">honeypot</span>{{else if .Shadow}}<span class="badge shadow">shadow · would {{.Decision}}</span>{{else}}<span class="badge {{.Decision}}">{{.Decision}}</span>{{end}}
+    {{if isHoneypot .RuleID}}<span class="badge honeypot">honeypot</span>{{else if isCanary .RuleID}}<span class="badge honeypot">canary</span>{{else if isQuarantine .RuleID}}<span class="badge deny">quarantined</span>{{else if .Shadow}}<span class="badge shadow">shadow · would {{.Decision}}</span>{{else}}<span class="badge {{.Decision}}">{{.Decision}}</span>{{end}}
     <code class="tool">{{.Tool}}</code>
     <small class="muted">{{ts .TS}} · {{.DurationMS}} ms · ~{{tokens .TokensEst}} tok</small>
-    {{if .IsError}}<span class="badge error">error</span>{{end}}
+    {{if and .IsError (eq .Decision "allow") (not .Shadow)}}<span class="badge error">error</span>{{end}}
     {{if .RuleID}}<small class="muted">rule {{.RuleID}}</small>{{end}}
+    {{range .Labels}}<span class="badge label">+{{.}}</span>{{end}}
   </summary>
   {{if .Reason}}<p class="reason">{{.Reason}}</p>{{end}}
   {{if .Error}}<p class="reason error-text">{{.Error}}</p>{{end}}

@@ -255,6 +255,7 @@ func buildUIServer(opts runOptions, cfg *config.Config, store *audit.Store, inbo
 		},
 		Freeze:   p.Freeze,
 		Unfreeze: p.Unfreeze,
+		Tools:    p,
 		Logger:   log,
 		Version:  version(),
 	})

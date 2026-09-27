@@ -68,22 +68,28 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 				sessionID = sess.ID
 			}
 
-			// Start with the most recent few, so the screen is not empty.
-			recent, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, Limit: 100000})
+			// Start with the most recent few, so the screen is not empty, up
+			// to the head of the chain the follow loop starts from.
+			head, err := store.Head(cmd.Context())
 			if err != nil {
 				return err
 			}
-			if last > 0 && len(recent) > last {
-				recent = recent[len(recent)-last:]
+			recent, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, Newest: true, Limit: max(last, 1)})
+			if err != nil {
+				return err
 			}
-			lastID := ""
-			for _, c := range recent {
-				w.write(c)
-				lastID = c.ID
+			if last <= 0 {
+				recent = nil
 			}
-			if len(recent) > 0 && lastID < recent[len(recent)-1].ID {
-				lastID = recent[len(recent)-1].ID
+			for i := len(recent) - 1; i >= 0; i-- {
+				if recent[i].Seq > head.Seq {
+					continue // the follow loop prints it
+				}
+				w.write(recent[i])
 			}
+			// Follow the chain: every call recorded from here on, in the order
+			// it was recorded, including slow ones that started earlier.
+			lastSeq := head.Seq
 			if noFollow {
 				return nil
 			}
@@ -103,13 +109,13 @@ stdout you could never see. Colours are on when stdout is a terminal.`,
 					return nil
 				case <-ticker.C:
 				}
-				fresh, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, AfterID: lastID, Limit: 1000})
+				fresh, err := store.ListCalls(cmd.Context(), audit.CallFilter{SessionID: sessionID, SeqAfter: &lastSeq, Limit: 1000})
 				if err != nil {
 					return err
 				}
 				for _, c := range fresh {
 					w.write(c)
-					lastID = c.ID
+					lastSeq = max(lastSeq, c.Seq)
 				}
 				if now := killswitch.Engaged(cfg.FreezeFile()); now != frozen && !asJSON {
 					frozen = now

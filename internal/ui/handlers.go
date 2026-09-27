@@ -66,6 +66,7 @@ type sessionData struct {
 	page
 	Session  *audit.Session
 	Calls    []*audit.Call
+	Labels   []string
 	Tool     string
 	Decision string
 }
@@ -84,10 +85,15 @@ func (s *Server) sessionData(r *http.Request, id string) (*sessionData, error) {
 	if err != nil {
 		return nil, err
 	}
+	var labels []string
+	for _, c := range calls {
+		labels = append(labels, c.Labels...)
+	}
 	return &sessionData{
 		page:     s.page("Session "+sess.ID, "sessions"),
 		Session:  sess,
 		Calls:    calls,
+		Labels:   labels,
 		Tool:     q.Get("tool"),
 		Decision: q.Get("decision"),
 	}, nil
@@ -152,6 +158,14 @@ type ruleView struct {
 	Action policy.Action
 	Reason string
 	When   []conditionView
+	Pack   string
+}
+
+type labelView struct {
+	Label string
+	Tool  string
+	When  []conditionView
+	Pack  string
 }
 
 type policyData struct {
@@ -161,6 +175,9 @@ type policyData struct {
 	Source     string
 	Upstreams  []upstreamView
 	Rules      []ruleView
+	Labels     []labelView
+	Packs      []string
+	Lint       []policy.LintFinding
 	Message    string
 	Error      string
 }
@@ -198,12 +215,23 @@ func (s *Server) policyData() *policyData {
 		})
 	}
 	for _, r := range cfg.Policy.Rules {
-		rv := ruleView{ID: r.ID, Tool: r.Tool, Action: r.Action, Reason: r.Reason}
+		rv := ruleView{ID: r.ID, Tool: r.Tool, Action: r.Action, Reason: r.Reason, Pack: r.Pack}
 		for _, c := range r.When {
 			rv.When = append(rv.When, conditionView{Path: c.Path, Summary: matcherSummary(c.Matcher)})
 		}
 		d.Rules = append(d.Rules, rv)
 	}
+	for _, lr := range cfg.Policy.Labels {
+		lv := labelView{Label: lr.Label, Tool: lr.Tool, Pack: lr.Pack}
+		for _, c := range lr.When {
+			lv.When = append(lv.When, conditionView{Path: c.Path, Summary: matcherSummary(c.Matcher)})
+		}
+		d.Labels = append(d.Labels, lv)
+	}
+	for _, ref := range cfg.Policy.Packs {
+		d.Packs = append(d.Packs, ref.Name)
+	}
+	d.Lint = policy.Lint(&cfg.Policy, policy.LintContext{ApprovalMode: cfg.Approval.Mode})
 	return d
 }
 
@@ -314,6 +342,12 @@ func matcherSummary(m policy.Matcher) string {
 		return "not equals " + jsonish(*m.NotEquals)
 	case m.Regex != nil:
 		return "matches /" + *m.Regex + "/"
+	case m.NotRegex != nil:
+		return "does not match /" + *m.NotRegex + "/"
+	case m.Includes != nil:
+		return "includes " + jsonish(*m.Includes)
+	case m.Excludes != nil:
+		return "excludes " + jsonish(*m.Excludes)
 	case m.Prefix != nil:
 		return "starts with " + jsonish(*m.Prefix)
 	case m.NotPrefix != nil:

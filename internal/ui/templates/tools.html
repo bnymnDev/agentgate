@@ -1,0 +1,67 @@
+{{define "content"}}
+<hgroup>
+  <h1>Tools</h1>
+  <p>Every tool the servers offer, checked against the lockfile and scanned for tool poisoning.
+  {{if .Lockfile}}<br><small class="muted">lockfile <code>{{.Lockfile}}</code> · mode {{.Mode}} · scan {{.Scan}}</small>{{end}}</p>
+</hgroup>
+
+{{if .Message}}<article class="status good"><p>{{.Message}}</p></article>{{end}}
+{{if .Error}}<article class="status bad"><p>{{.Error}}</p></article>{{end}}
+
+{{if .Offline}}
+  <article>
+    <p>No proxy runs behind this page, so the tools cannot be compared with what the servers offer right now.
+    Run <code>agentgate run --ui</code> for the live view, or <code>agentgate lock</code> in a terminal.</p>
+  </article>
+  {{if .Pinned}}
+  <table>
+    <thead><tr><th>Upstream</th><th>Tool</th><th>Pinned</th><th>Status</th></tr></thead>
+    <tbody>
+    {{range .Pinned}}
+      <tr>
+        <td>{{.Upstream}}</td>
+        <td><code class="tool">{{.Tool}}</code></td>
+        <td><small>{{ts .Pin.PinnedAt}}</small></td>
+        <td>{{if .Pin.Drift}}<span class="badge deny">changed</span> <small class="muted">seen {{ts .Pin.Drift.SeenAt}}</small>{{else}}<span class="badge allow">pinned</span>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{end}}
+{{else if not .Reports}}
+  <article><p>No tools offered{{if not .Lockfile}}, and pinning is off{{end}}.</p></article>
+{{else}}
+  {{range .Reports}}
+  <details class="call tool-report {{if .Quarantined}}deny{{else if or .Findings (eq .Status "changed") (eq .Status "new")}}ask{{else}}allow{{end}}" {{if or .Quarantined .Findings (eq .Status "changed")}}open{{end}}>
+    <summary>
+      {{if .Quarantined}}<span class="badge deny">quarantined</span>{{end}}
+      <span class="badge {{if eq .Status "pinned"}}allow{{else if eq .Status "removed"}}error{{else}}ask{{end}}">{{.Status}}</span>
+      <code class="tool">{{if .Exposed}}{{.Exposed}}{{else}}{{.Upstream}}.{{.Tool}}{{end}}</code>
+      {{if .Findings}}<span class="badge deny">{{len .Findings}} finding{{if gt (len .Findings) 1}}s{{end}}</span>{{end}}
+      {{if .Accepted}}<small class="muted">{{len .Accepted}} accepted</small>{{end}}
+      {{if .PinnedNow}}<small class="muted">pinned just now</small>{{end}}
+    </summary>
+    {{if .Reason}}<p class="reason">{{if .Quarantined}}Hidden from the host: {{else}}Would be held back: {{end}}{{.Reason}}.</p>{{end}}
+    {{if and .Pinned (eq .Status "changed")}}
+      <h6>Pinned description</h6>
+      <pre><code>{{reveal .Pinned.Description}}</code></pre>
+      <h6>Now</h6>
+      <pre><code>{{reveal .Current.Description}}</code></pre>
+    {{else if .Current.Description}}
+      <h6>Description</h6>
+      <pre><code>{{reveal .Current.Description}}</code></pre>
+    {{end}}
+    {{range .Findings}}
+      <p><span class="badge deny">{{.Kind}}</span> <small class="muted">{{.Where}}</small> {{.Detail}}
+      {{if .Excerpt}}<br><code>{{reveal .Excerpt}}</code>{{end}}</p>
+    {{end}}
+    {{if and $.CanTrust (or .Findings (ne .Status "pinned"))}}
+    <form method="post" action="/tools/trust" onsubmit="return confirm('Trust {{.Upstream}}.{{.Tool}} exactly as it is offered now?')">
+      <input type="hidden" name="tool" value="{{.Upstream}}.{{.Tool}}">
+      <button type="submit" class="outline">Trust as it is now</button>
+    </form>
+    {{end}}
+  </details>
+  {{end}}
+{{end}}
+{{end}}

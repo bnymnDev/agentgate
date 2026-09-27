@@ -29,6 +29,13 @@
 </table>
 </div>
 
+{{if .Lint}}
+<h4>Lint</h4>
+{{range .Lint}}<p><span class="badge {{if eq .Severity "warn"}}ask{{end}}">{{.Severity}}</span> {{if .Rule}}<code>{{.Rule}}</code> {{end}}<small class="muted">{{.Check}}</small> {{.Message}}</p>{{end}}
+{{end}}
+
+{{if .Packs}}<p>Packs: {{range .Packs}}<span class="badge label">{{.}}</span> {{end}}<small class="muted">their rules come after yours, prefixed with the pack name</small></p>{{end}}
+
 <h4>Rules</h4>
 <div class="overflow-auto">
 <table>
@@ -37,7 +44,7 @@
   {{range $i, $r := .Rules}}
     <tr>
       <td class="num">{{$i}}</td>
-      <td><code>{{$r.ID}}</code></td>
+      <td><code>{{$r.ID}}</code>{{if $r.Pack}} <small class="muted">pack</small>{{end}}</td>
       <td><code>{{or $r.Tool "*"}}</code></td>
       <td>{{range $r.When}}<div><code>{{.Path}}</code> {{.Summary}}</div>{{else}}<span class="muted">always</span>{{end}}</td>
       <td><span class="badge {{$r.Action}}">{{$r.Action}}</span></td>
@@ -47,6 +54,25 @@
   </tbody>
 </table>
 </div>
+
+{{if .Labels}}
+<h4>Labels</h4>
+<div class="overflow-auto">
+<table>
+  <thead><tr><th>Label</th><th>Tool</th><th>Conditions</th><th>From</th></tr></thead>
+  <tbody>
+  {{range .Labels}}
+    <tr>
+      <td><span class="badge label">{{.Label}}</span></td>
+      <td><code>{{or .Tool "*"}}</code></td>
+      <td>{{range .When}}<div><code>{{.Path}}</code> {{.Summary}}</div>{{else}}<span class="muted">always</span>{{end}}</td>
+      <td>{{if .Pack}}pack {{.Pack}}{{else}}<span class="muted">your config</span>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
 
 <h4>File</h4>
 <pre><code>{{.Source}}</code></pre>

@@ -13,11 +13,6 @@ labels:
     when:
       tool_name:
         regex: '(?i)(fetch|browse|navigate|scrape|crawl|web_?search|search_web|read_url|get_url|open_url|http_get|download|get_issue|list_issues|search_issues|issue_read|get_pull_request|list_pull_requests|get_comments|read_email|get_email|list_emails|search_emails|get_message|list_messages|read_message|get_page|read_page|screenshot)'
-  - label: untrusted-input
-    tool: "*"
-    when:
-      annotations.open_world: true
-      annotations.read_only: true
   - label: private-data
     tool: "*"
     when:

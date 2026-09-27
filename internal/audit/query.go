@@ -136,6 +136,12 @@ type CallFilter struct {
 	Since time.Time
 	// RuleID keeps only calls decided by this rule id.
 	RuleID string
+	// SeqAfter keeps only calls recorded after this link of the hash chain,
+	// in the order they were recorded. It is what a live view follows: a
+	// slow call that started early is still picked up when it finishes.
+	SeqAfter *int64
+	// Newest returns the most recent calls first.
+	Newest bool
 	Limit  int
 }
 
@@ -169,6 +175,15 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 		conds = append(conds, "rule_id = ?")
 		args = append(args, f.RuleID)
 	}
+	order := "ts ASC, id ASC"
+	switch {
+	case f.SeqAfter != nil:
+		conds = append(conds, "seq > ?")
+		args = append(args, *f.SeqAfter)
+		order = "seq ASC"
+	case f.Newest:
+		order = "ts DESC, id DESC"
+	}
 	where := ""
 	if len(conds) > 0 {
 		where = "WHERE " + strings.Join(conds, " AND ")
@@ -180,7 +195,7 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
 		SELECT `+callColumns+`
-		FROM calls %s ORDER BY ts ASC, id ASC LIMIT ?`, where), args...)
+		FROM calls %s ORDER BY %s LIMIT ?`, where, order), args...)
 	if err != nil {
 		return nil, err
 	}
