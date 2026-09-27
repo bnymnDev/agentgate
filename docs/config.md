@@ -479,6 +479,16 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--no-follow` | print the recent calls and exit |  |
 | `--session` | only calls of this session (id or prefix) |  |
 
+### `test [file...] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--from` | write a test from a recorded session (id or prefix) to stdout, instead of running tests (repeatable) |  |
+| `--json` | print the outcomes as JSON |  |
+| `--missing-ok` | succeed when no file is named and the default test file does not exist |  |
+| `--run` | only the tests whose names match this regular expression |  |
+
 ### `ui [flags]`
 
 | Flag | What it does | Default |

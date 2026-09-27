@@ -18,6 +18,9 @@ inputs:
   lint:
     description: What a lint warning does — fail the step, warn, or off.
     default: fail
+  tests:
+    description: Policy tests to run against the config — auto runs the test file next to it if there is one, off runs none, anything else names a test file.
+    default: auto
 
 outputs:
   path:
@@ -96,6 +99,7 @@ runs:
       env:
         CONFIG: ${{ inputs.config }}
         LINT: ${{ inputs.lint }}
+        TESTS: ${{ inputs.tests }}
         AGENTGATE: ${{ steps.install.outputs.path }}
       run: |
         set -euo pipefail
@@ -104,4 +108,9 @@ runs:
           off) ;;
           warn) "$AGENTGATE" policy lint "$CONFIG" || echo "::warning::agentgate policy lint found problems in $CONFIG" ;;
           *) "$AGENTGATE" policy lint "$CONFIG" ;;
+        esac
+        case "$TESTS" in
+          off) ;;
+          auto) "$AGENTGATE" test --config "$CONFIG" --missing-ok ;;
+          *) "$AGENTGATE" test --config "$CONFIG" "$TESTS" ;;
         esac

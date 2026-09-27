@@ -493,6 +493,130 @@ CI:
 agentgate check --tool 'shell.exec' --args '{"command":"rm -rf /"}' && echo "THIS SHOULD NOT HAPPEN"
 ```
 
+### Test files
+
+A policy worth having is worth a test. A test file holds calls, the session
+each is made in, and the decision each has to get; `agentgate test` runs them
+all and exits 1 when one fails. Without arguments it reads the file next to
+the config, with `.test` before the extension — `agentgate.test.yaml` for
+`agentgate.yaml`:
+
+```yaml
+tests:
+  - name: rm -rf / is denied
+    call: { tool: shell.exec, args: { command: "rm -rf /" } }
+    expect: deny
+
+  - name: merging waits for a human
+    call: { tool: github.merge_pull_request, args: { pull_number: 7 } }
+    expect: { action: ask, rule: github/merge }
+
+  - name: nothing leaves after a poisoned page
+    labels: [injection-suspected]                # the session already carries these
+    call: { tool: mail.send, args: { to: someone@example.com } }
+    expect: { action: deny, reason: "prompt injection" }
+
+  - name: deploys only after green tests
+    before:                                      # what the session did first
+      - tool: shell.test
+        result: { is_error: false }              # label rules may look at it
+    call: { tool: shell.deploy }
+    expect: allow
+
+  - name: fetching a page marks the session
+    call: { tool: web.fetch, args: { url: "https://example.com" } }
+    expect: { action: allow, labels: [untrusted-input] }
+
+  - name: the budget runs out
+    before:
+      - { tool: fs.write_file, args: { path: /home/me/repo/x }, repeat: 50 }
+    call: { tool: fs.write_file, args: { path: /home/me/repo/y } }
+    expect: { action: deny, rule: budget }
+
+  - name: no deploys on Friday afternoon
+    at: friday 17:00                             # else the tests run at the current time
+    host: ci-bot/2.1                             # for host.* conditions
+    call: { tool: shell.deploy, annotations: { destructive: false } }
+    expect: { action: deny, rule: no-deploys-on-friday-afternoon }
+```
+
+```
+$ agentgate test
+agentgate.test.yaml
+  PASS  rm -rf / is denied                    deny   baseline/rm-rf-root
+  PASS  merging waits for a human             ask    github/merge
+  PASS  nothing leaves after a poisoned page  deny   lethal-trifecta/injected-egress
+  PASS  deploys only after green tests        allow  default
+  PASS  fetching a page marks the session     allow  default
+  PASS  the budget runs out                   deny   budget
+  PASS  no deploys on Friday afternoon        deny   no-deploys-on-friday-afternoon
+
+7 passed, 0 failed
+```
+
+A failing test says what it wanted, what it got, and where it is:
+
+```
+  FAIL  merging waits for a human             want rule github/merge-pr, got github/merge
+        agentgate.test.yaml:6
+```
+
+Each test runs in a session of its own, through the same evaluator, session
+tracker and label rules the proxy uses. The calls in `before` are what the
+session did: a denied one does nothing, the others earn their labels — the
+labels agentgate attaches to a result itself included — and count towards the
+budgets and the loop guard; one the policy would ask about counts as
+approved. `repeat` makes a call several times. `expect` is an action, or a
+mapping with the `action`, the `rule` that has to decide, words the `reason`
+has to contain, and `labels` the session has to carry after the call.
+
+Tools are named as the host sees them (`shell__exec`) or as `upstream.tool`.
+`--run` picks tests by name, `--json` prints the outcomes, and
+`agentgate init` writes starter tests next to every config it creates. The
+[GitHub Action](integrations.md#ci-the-github-action) runs the tests next to
+the config it is given. Time rules see the local time of the machine that runs
+the tests, as they see the gateway's.
+
+### A whole session as a test
+
+A test can also be a session, call by call, where any call may carry what it
+has to get:
+
+```yaml
+  - name: browse, then try to mail it out
+    steps:
+      - tool: web.fetch
+        args: { url: "https://example.com/issues/42" }
+        expect: { action: allow, labels: [untrusted-input] }
+      - tool: fs.read_file
+        args: { path: /home/me/app/.env }
+      - tool: mail.send
+        args: { to: someone@example.com }
+        expect: { action: ask, rule: lethal-trifecta/trifecta }
+```
+
+`--from` writes one from a recorded session: every call it made, at the time
+it was made, expecting the decision the policy reached then. A good day of
+work becomes the regression suite, and a change to the policy fails it on
+exactly the calls the change would decide differently:
+
+```sh
+agentgate test --from 01JD7Z > good-day.test.yaml
+agentgate test agentgate.test.yaml good-day.test.yaml
+```
+
+```
+good-day.test.yaml
+  FAIL  session 01JD7Z4V1B, coding-agent 1.4.2, 2026-09-27 19:07  step 3 (shell__exec, line 22): want deny, got allow: default allow
+        good-day.test.yaml:7
+```
+
+Arguments and results are as the audit log holds them — redacted — and
+anything that does not print is written as an escape, so a test file never
+hides what its calls carry. Calls stopped by a honeypot, a canary, tool
+pinning or the kill switch are left out as comments: they were never the
+policy's to decide.
+
 The policy engine's own test suite is a set of golden files:
 `testdata/policies/*.yaml` plus `testdata/calls/*.json` produce
 `testdata/golden/*.golden`, one line per call. `make golden` regenerates them —

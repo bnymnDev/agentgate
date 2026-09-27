@@ -49,6 +49,13 @@ credentials on their way out, and instructions hidden in what a tool returns.
   `add` and `remove`; `add` and `remove` edit only the lines of the list.
 - `agentgate policy lint`: rules that can never fire, allow rules that let more
   through than they seem to, conditions on labels nothing attaches, and more.
+- `agentgate test` runs policy tests: calls, the session each is made in —
+  labels, earlier calls and their results, the host, the time — and the
+  decision each has to get. It reads `agentgate.test.yaml` next to the config
+  by default and exits 1 when a test fails; `agentgate init` writes starter
+  tests, and the GitHub Action runs them. A test can be a whole session, and
+  `agentgate test --from <session>` writes one from a recorded session,
+  expecting every decision the policy reached in it.
 - A tamper-evident audit log. Every call is chained to the one before it;
   `agentgate verify` proves no call was changed, removed or reordered, and
   `--anchor` also catches a cut-off end. Each session records a snapshot of
@@ -69,6 +76,8 @@ credentials on their way out, and instructions hidden in what a tool returns.
 - `upstreams[].tools` offers only the tools that match its globs; `!` patterns
   hide instead. A tool that is not offered never reaches the model.
 - `agentgate check --label`, `--called`, `--host` and `--annotations`.
+  `--tool` takes `upstream.tool` as well as the name the host sees, and
+  rules written with either spelling match both.
 - Web UI: a live view, a tools page with what pinning and the scan found and a
   trust button, and the labels on sessions and calls.
 - A container image, `ghcr.io/bnymndev/agentgate`, for linux/amd64 and

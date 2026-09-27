@@ -237,7 +237,8 @@ serves the ones that connect over HTTP.
 | **Replay and diff** | `agentgate replay <session> --dry-run` runs a real session through the current policy and shows exactly which decisions change. |
 | **Mock servers** | `agentgate mock <session>` serves a recorded session as an MCP server — the same tools, the recorded answers, nothing real behind it. A repeatable, offline fixture. |
 | **OpenTelemetry** | One trace per session, one span per call, over OTLP to Jaeger, Tempo, Honeycomb, Datadog or anything else that speaks it. |
-| **CI** | A GitHub Action that installs and lints, and one that writes what the agent did to the job summary and fails the job on a canary, a honeypot or a quarantined tool. |
+| **Policy tests** | `agentgate test` runs the calls a policy must stop and the ones it must let through — with the session each is made in — and fails CI when a change to a rule or a pack breaks one. `--from <session>` turns a recorded session into a test, so a good day of work becomes the regression suite. |
+| **CI** | A GitHub Action that installs, lints and runs the policy tests, and one that writes what the agent did to the job summary and fails the job on a canary, a honeypot or a quarantined tool. |
 | **Webhooks** | Slack, Discord, ntfy or plain JSON, for denials, questions, honeypots, drift, exfiltration and injection. |
 
 ---
@@ -272,6 +273,7 @@ agentgate stats --since 24h            # what did it actually do?
 agentgate policy suggest > p.yaml      # an allow-list of exactly that, default: deny
 agentgate replay <session> --dry-run   # what would the new policy have changed?
 agentgate policy lint                  # rules that never fire, allows that let too much through
+agentgate test                         # and the calls it must never let through, as tests
 ```
 
 When the only things that flip to `deny` are the ones you meant, delete the
@@ -350,13 +352,28 @@ Paths: `args.path`, `args.items[*].sku`, `"args.{command,cmd}"`, `tool`,
 `session.label.<name>`, `session.called`. The whole language, including what
 happens when a path is missing, is in [docs/policies.md](docs/policies.md).
 
-Test a rule before you ship it:
+Test a rule before you ship it — once, with `check`:
 
 ```sh
 agentgate check --tool 'shell.exec' --args '{"command":"rm -rf /"}'
 agentgate check --tool 'deploy' --at 'friday 17:00'
 agentgate check --tool 'mail.send' --label untrusted-input --label private-data
-agentgate policy lint agentgate.yaml
+```
+
+— or for good, in `agentgate.test.yaml`, which `agentgate test` runs and CI
+fails on:
+
+```yaml
+tests:
+  - name: rm -rf / is denied
+    call: { tool: shell.exec, args: { command: "rm -rf /" } }
+    expect: deny
+
+  - name: deploys only after green tests
+    before:
+      - { tool: shell.test, result: { is_error: false } }
+    call: { tool: shell.deploy }
+    expect: allow
 ```
 
 ---
@@ -377,7 +394,7 @@ approval:
 ```yaml
 - uses: bnymnDev/agentgate@v0.4.0
   with:
-    config: .github/agentgate.yaml       # validated and linted
+    config: .github/agentgate.yaml       # validated, linted, its tests run
 
 # ... the agent runs, its MCP servers behind agentgate ...
 
@@ -429,6 +446,7 @@ All of it in [docs/integrations.md](docs/integrations.md).
 | `stats [flags]` | What did the agent actually do? Per tool, per rule |
 | `status` | Show the gateway's state at a glance |
 | `tail [flags]` | Watch tool calls scroll by, live |
+| `test [file...] [flags]` | Run the policy tests: calls, and the decisions they have to get |
 | `ui [flags]` | Browse the audit log in a browser |
 | `unfreeze` | Lift the kill switch |
 | `uninstall [host...] [flags]` | Take agentgate out from in front of a host's MCP servers |
@@ -460,7 +478,7 @@ Every flag: [docs/config.md](docs/config.md).
 | Document | What is in it |
 |---|---|
 | [docs/guardrails.md](docs/guardrails.md) | Kill switch, honeypots, tool pinning, the poisoning scan, canaries, injection, the lethal trifecta, approvals, the hash chain — how each works and when to use it |
-| [docs/policies.md](docs/policies.md) | The rule language in full: selectors, matchers, labels, packs, lint |
+| [docs/policies.md](docs/policies.md) | The rule language in full: selectors, matchers, labels, packs, lint, tests |
 | [docs/config.md](docs/config.md) | Every field of `agentgate.yaml`, every CLI flag |
 | [docs/integrations.md](docs/integrations.md) | `init`, `doctor`, the GitHub Action, containers, OpenTelemetry, `mock`, your phone |
 | [docs/replay.md](docs/replay.md) | Replay, diff, stats, and the shadow → suggest → enforce workflow |
@@ -496,9 +514,9 @@ prompts and resources (they pass through untouched), and authentication in
 front of the web UI (it refuses to bind to anything but localhost unless you
 insist).
 
-Next: policy tests as files that `agentgate test` runs in CI, approvals
-answered straight from a Slack message, and shared lockfiles for popular
-servers, so a definition can be checked against what everyone else pinned.
+Next: approvals answered straight from a Slack message, and shared lockfiles
+for popular servers, so a definition can be checked against what everyone
+else pinned.
 
 ## License
 

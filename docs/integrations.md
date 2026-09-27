@@ -28,7 +28,8 @@ For each host with servers, `--yes`:
 1. writes `~/.agentgate/<host>.yaml` with the host's servers as upstreams —
    commands, arguments, environment, remote URLs and headers carried over —
    in shadow mode, with the `baseline`, `secrets` and `lethal-trifecta` packs,
-   tool pinning and a honeypot;
+   tool pinning and a honeypot, and next to it `<host>.test.yaml`, starter
+   [tests](policies.md#testing-a-policy) for that policy;
 2. replaces those servers in the host's config with one entry that runs
    agentgate by its absolute path;
 3. keeps the original entries, byte for byte, in `~/.agentgate/installed.json`
@@ -100,7 +101,8 @@ jobs:
       - uses: actions/checkout@v7
 
       # Installs agentgate, checksum-verified, and puts it on the PATH.
-      # With a config, validates it and fails the step on a lint warning.
+      # With a config, validates it, runs its policy tests, and fails the
+      # step on a lint warning or a failing test.
       - uses: bnymnDev/agentgate@v0.4.0
         with:
           config: .github/agentgate.yaml
@@ -123,6 +125,7 @@ jobs:
 | `version` | `latest` | The release to install. |
 | `config` | *(none)* | A config to validate and lint. |
 | `lint` | `fail` | `fail`, `warn` or `off`: what a lint warning does. |
+| `tests` | `auto` | The [policy tests](policies.md#testing-a-policy) to run: `auto` runs the file next to the config if there is one, `off` none; anything else names a test file. |
 | `binary` | *(none)* | Use this binary instead of downloading one. |
 
 | `bnymnDev/agentgate/report` input | Default | |
@@ -132,10 +135,10 @@ jobs:
 | `fail-on` | `canary>0,honeypot>0,quarantine>0` | Thresholds, as `agentgate stats --fail-on` takes them. Empty never fails. |
 | `verify` | `true` | Verify the hash chain. |
 
-The same checks work in any CI: `agentgate stats --fail-on '…'` exits 1 when
-a threshold is crossed, `agentgate verify` exits 1 on a broken chain, and
-`agentgate lock --check` exits 1 when a server changed a tool since the
-lockfile was committed.
+The same checks work in any CI: `agentgate test` exits 1 when a policy test
+fails, `agentgate stats --fail-on '…'` when a threshold is crossed,
+`agentgate verify` on a broken chain, and `agentgate lock --check` when a
+server changed a tool since the lockfile was committed.
 
 ## Containers
 
