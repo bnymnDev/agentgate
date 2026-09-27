@@ -28,6 +28,10 @@ func (p *Proxy) middleware(next mcp.MethodHandler) mcp.MethodHandler {
 			res, err := next(ctx, method, req)
 			p.mirrorRoots(ctx, req.GetSession())
 			return res, err
+		case "tools/call":
+			if res, held := p.onQuarantinedCall(req); held {
+				return res, nil
+			}
 		}
 		return next(ctx, method, req)
 	}

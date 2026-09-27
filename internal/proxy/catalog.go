@@ -29,6 +29,13 @@ type catalog struct {
 	honeypots map[string]bool   // decoys currently registered on the server
 	// hash names the snapshot of the current tool catalog in the audit log.
 	hash string
+	// quarantined maps the exposed names of tools held back by pinning to
+	// the reason; reports is every tool's standing with the lockfile.
+	quarantined map[string]string
+	reports     []ToolReport
+	// announced remembers which drift and scan findings were already
+	// reported by this process, so a refresh does not repeat them.
+	announced map[string]bool
 }
 
 // ToolBinding maps an exposed tool name back to its upstream.
@@ -233,6 +240,27 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 		}
 	}
 
+	offered := make([]offeredTool, 0, len(newTools))
+	for _, t := range newTools {
+		d, err := definitionOf(t.orig)
+		if err != nil {
+			continue
+		}
+		offered = append(offered, offeredTool{upstream: t.binding.Upstream, exposed: t.binding.Exposed, def: d})
+	}
+	held, reports := p.checkPins(cfg, offered)
+	if len(held) > 0 {
+		kept := newTools[:0]
+		for _, t := range newTools {
+			if _, h := held[t.binding.Exposed]; h {
+				delete(tools, t.binding.Exposed)
+				continue
+			}
+			kept = append(kept, t)
+		}
+		newTools = kept
+	}
+
 	entries := make([]audit.CatalogEntry, 0, len(newTools))
 	for _, t := range newTools {
 		def, err := json.Marshal(t.orig)
@@ -249,6 +277,8 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 
 	p.catalog.mu.Lock()
 	p.catalog.hash = hash
+	p.catalog.quarantined = held
+	p.catalog.reports = reports
 	goneTools := missing(p.catalog.tools, tools)
 	goneResources := missingSet(p.catalog.resources, resources)
 	goneTemplates := missingSet(p.catalog.templates, templates)
@@ -287,7 +317,7 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 
 	p.log.Info("catalog refreshed",
 		"tools", len(tools), "resources", len(resources), "prompts", len(prompts),
-		"upstreams", len(p.upstreams))
+		"upstreams", len(p.upstreams), "quarantined", len(held))
 	if len(errs) > 0 {
 		return joinErrors(errs)
 	}

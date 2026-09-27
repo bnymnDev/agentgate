@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -38,8 +39,8 @@ type Notify struct {
 // Webhook is one HTTP endpoint that wants to hear about events.
 type Webhook struct {
 	URL string `yaml:"url"`
-	// Events is the subset to send: deny, ask, honeypot, freeze, error,
-	// shadow. Empty means deny, ask, honeypot and freeze.
+	// Events is the subset to send: deny, ask, honeypot, freeze, drift,
+	// exfiltration, error, shadow. Empty means all but error and shadow.
 	Events []string `yaml:"events"`
 	// Format shapes the body: "json" (the default, agentgate's own event
 	// object), "slack", "discord" or "ntfy". The named ones post a message
@@ -57,14 +58,20 @@ const (
 	EventFreeze   = "freeze"
 	EventError    = "error"
 	EventShadow   = "shadow"
+	// EventDrift fires when a server changes a pinned tool, offers a new one,
+	// or ships a definition the scan flags.
+	EventDrift = "drift"
+	// EventExfiltration fires when a canary token shows up in a call.
+	EventExfiltration = "exfiltration"
 )
 
 var knownEvents = map[string]bool{
 	EventDeny: true, EventAsk: true, EventHoneypot: true, EventFreeze: true, EventError: true, EventShadow: true,
+	EventDrift: true, EventExfiltration: true,
 }
 
 // DefaultWebhookEvents are sent when a webhook does not say which it wants.
-var DefaultWebhookEvents = []string{EventDeny, EventAsk, EventHoneypot, EventFreeze}
+var DefaultWebhookEvents = []string{EventDeny, EventAsk, EventHoneypot, EventFreeze, EventDrift, EventExfiltration}
 
 // Wants reports whether the webhook subscribed to an event.
 func (w *Webhook) Wants(event string) bool {
@@ -138,6 +145,79 @@ func (n *Notify) normalize() error {
 		for k, v := range w.Headers {
 			w.Headers[k] = ExpandEnv(v)
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// Pinning records every tool definition in a lockfile the first time it is
+// seen and watches for changes. A server that changes what its tools say
+// after you installed it — a rug pull — is caught the moment it does, and a
+// definition with instructions hidden in it is caught before the model reads
+// it.
+type Pinning struct {
+	// Mode is what a change to a pinned tool does:
+	//
+	//	warn     report it (log, webhook "drift", web UI) and let it through
+	//	enforce  also hide the changed tool, and any new one, from the host
+	//	         until you trust it with `agentgate lock --trust`
+	//	off      keep no lockfile
+	//
+	// The default is warn.
+	Mode string `yaml:"mode"`
+	// Lockfile is where the pins are kept. It defaults to the config file's
+	// name with .lock instead of .yaml, next to it, and is meant to be
+	// reviewed and committed like any other lockfile.
+	Lockfile string `yaml:"lockfile"`
+	// Scan is what a definition with the marks of tool poisoning does —
+	// hidden characters, instructions to the model, pointers at credentials,
+	// talk about another server's tools: warn (the default), quarantine (hide
+	// the tool until it is trusted) or off.
+	Scan string `yaml:"scan"`
+}
+
+// Enabled reports whether a lockfile is kept.
+func (p *Pinning) Enabled() bool { return p.Mode != "off" && p.Lockfile != "" }
+
+// Enforced reports whether changed and new tools are held back.
+func (p *Pinning) Enforced() bool { return p.Enabled() && p.Mode == "enforce" }
+
+// Quarantines reports whether flagged definitions are held back.
+func (p *Pinning) Quarantines() bool { return p.Scan == "quarantine" }
+
+// Scans reports whether definitions are scanned at all.
+func (p *Pinning) Scans() bool { return p.Scan != "off" }
+
+func (p *Pinning) normalize(configPath string) error {
+	var errs []error
+	if p.Mode == "" {
+		p.Mode = "warn"
+	}
+	switch p.Mode {
+	case "warn", "enforce", "off":
+	default:
+		errs = append(errs, fmt.Errorf("pinning.mode: unknown mode %q, use warn, enforce or off", p.Mode))
+	}
+	if p.Scan == "" {
+		p.Scan = "warn"
+	}
+	switch p.Scan {
+	case "warn", "quarantine", "off":
+	default:
+		errs = append(errs, fmt.Errorf("pinning.scan: unknown value %q, use warn, quarantine or off", p.Scan))
+	}
+	switch {
+	case p.Lockfile != "":
+		path, err := ExpandPath(p.Lockfile)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("pinning.lockfile: %w", err))
+			break
+		}
+		if !filepath.IsAbs(path) && configPath != "" {
+			path = filepath.Join(filepath.Dir(configPath), path)
+		}
+		p.Lockfile = path
+	case configPath != "":
+		p.Lockfile = strings.TrimSuffix(configPath, filepath.Ext(configPath)) + ".lock"
 	}
 	return errors.Join(errs...)
 }

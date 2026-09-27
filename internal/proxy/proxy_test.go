@@ -26,6 +26,8 @@ type harness struct {
 	proxy  *Proxy
 	client *mcp.ClientSession
 	store  *audit.Store
+	// servers are the MCP servers behind each upstream, in config order.
+	servers []*mcp.Server
 }
 
 func setup(t *testing.T, configYAML string) *harness {
@@ -53,11 +55,14 @@ func setup(t *testing.T, configYAML string) *harness {
 	require.NoError(t, err)
 
 	// Put a real MCP server behind every configured upstream.
+	var servers []*mcp.Server
 	for _, u := range p.upstreams {
 		serverSide, clientSide := mcp.NewInMemoryTransports()
-		_, err := testserver.New().Connect(ctx, serverSide, nil)
+		srv := testserver.New()
+		_, err := srv.Connect(ctx, serverSide, nil)
 		require.NoError(t, err)
 		u.override = clientSide
+		servers = append(servers, srv)
 	}
 	require.NoError(t, p.Connect(ctx))
 
@@ -76,7 +81,7 @@ func setup(t *testing.T, configYAML string) *harness {
 		defer cancel()
 		store.Close(closeCtx)
 	})
-	return &harness{proxy: p, client: client, store: store}
+	return &harness{proxy: p, client: client, store: store, servers: servers}
 }
 
 const singleUpstream = `

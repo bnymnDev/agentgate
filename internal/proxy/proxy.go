@@ -20,6 +20,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
+	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
@@ -45,6 +46,13 @@ type Proxy struct {
 	catalog   catalog
 	refreshMu sync.Mutex
 
+	// pinMode, lock and lockStamp belong to tool pinning; lock is read and
+	// written under lockMu.
+	pinMode   PinningMode
+	lockMu    sync.Mutex
+	lock      *pinning.Lockfile
+	lockStamp fileStamp
+
 	sessions sync.Map // *mcp.ServerSession -> *sessionState
 
 	closeOnce sync.Once
@@ -64,6 +72,9 @@ type Options struct {
 	Approver Approver
 	// DownstreamTransport is recorded with the session ("stdio" or "http").
 	DownstreamTransport string
+	// Pinning says what the proxy may do with the lockfile. The zero value
+	// follows the config.
+	Pinning PinningMode
 }
 
 // sessionState is what agentgate tracks per downstream connection. The call
@@ -140,6 +151,7 @@ func New(opts Options) (*Proxy, error) {
 		cfg:      opts.Config,
 		byName:   map[string]*upstream{},
 		done:     make(chan struct{}),
+		pinMode:  opts.Pinning,
 	}
 	if p.approver == nil {
 		p.approver = DenyApprover{}
@@ -223,6 +235,7 @@ func (p *Proxy) Connect(ctx context.Context) error {
 	if err := p.Refresh(ctx); err != nil {
 		p.log.Warn("building tool catalog", "error", err)
 	}
+	p.watchLockfile(2 * time.Second)
 	return nil
 }
 

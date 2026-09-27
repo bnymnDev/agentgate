@@ -56,6 +56,7 @@ untouched.`,
 		newUnfreezeCmd(g),
 		newStatusCmd(g),
 		newVerifyCmd(g),
+		newLockCmd(g),
 	)
 	return root
 }

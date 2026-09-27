@@ -14,3 +14,6 @@ coverage.out
 .vscode/
 *.swp
 .DS_Store
+
+# lockfiles written by `make dev` and local runs against the test configs
+testdata/policies/*.lock

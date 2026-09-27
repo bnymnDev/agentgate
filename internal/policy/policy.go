@@ -65,6 +65,11 @@ const (
 	RuleLoopGuard = "loop-guard"
 	RuleBudget    = "budget"
 	RuleHoneypot  = "honeypot"
+	// RuleQuarantine denies calls to a tool whose definition changed since
+	// it was pinned, or that the definition scan flagged.
+	RuleQuarantine = "quarantine"
+	// RuleCanary denies a call that carries a canary token out.
+	RuleCanary = "canary"
 )
 
 // Allowed reports whether the call may be forwarded without further ado.

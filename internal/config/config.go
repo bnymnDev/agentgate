@@ -40,6 +40,7 @@ type Config struct {
 	Policy          policy.Policy `yaml:"policy"`
 	Honeypots       Honeypots     `yaml:"honeypots"`
 	Notify          Notify        `yaml:"notify"`
+	Pinning         Pinning       `yaml:"pinning"`
 
 	// Path is the file the config was read from. It is not part of the file.
 	Path string `yaml:"-"`
@@ -251,6 +252,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, err)
 	}
 	if err := c.Notify.normalize(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Pinning.normalize(c.Path); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
