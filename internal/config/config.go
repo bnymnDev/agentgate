@@ -4,6 +4,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -49,14 +50,54 @@ type Config struct {
 
 // Approval configures what happens to calls a rule marked "ask".
 type Approval struct {
-	// Mode is auto, tty, ui or deny.
+	// Mode is auto, tty, ui, ntfy or deny.
 	//
-	//	auto  use the web UI when it is running, else the TTY, else deny
+	//	auto  ask on every channel that is available — the web UI when it is
+	//	      running, the terminal, the phone when ntfy is configured — and
+	//	      take the first answer; deny when there is none
 	//	tty   prompt on the agentgate terminal only
 	//	ui    wait for an approval in the web UI only
+	//	ntfy  ask on the phone only
 	//	deny  never ask, deny every "ask" decision
 	Mode    string   `yaml:"mode"`
 	Timeout Duration `yaml:"timeout"`
+	// Ntfy puts approvals on your phone through an ntfy server, with
+	// Allow / Allow for session / Deny buttons on the notification.
+	Ntfy *Ntfy `yaml:"ntfy"`
+}
+
+// Ntfy is an ntfy server and topic to put approvals on.
+type Ntfy struct {
+	// Server defaults to https://ntfy.sh.
+	Server string `yaml:"server"`
+	// Topic is where questions go; answers come back on <topic>-answers. On
+	// a public server the topic name is the password, so it must be long
+	// and random unless a token protects it.
+	Topic string `yaml:"topic"`
+	// Token is an access token for a server with access control.
+	Token string `yaml:"token"`
+}
+
+var ntfyTopicRe = regexp.MustCompile(`^[-_A-Za-z0-9]{1,64}$`)
+
+func (n *Ntfy) normalize() error {
+	var errs []error
+	n.Server = ExpandEnv(n.Server)
+	if n.Server == "" {
+		n.Server = "https://ntfy.sh"
+	}
+	if u, err := url.Parse(n.Server); err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		errs = append(errs, fmt.Errorf("approval.ntfy.server: %q is not an http(s) URL", n.Server))
+	}
+	n.Topic = ExpandEnv(n.Topic)
+	n.Token = ExpandEnv(n.Token)
+	switch {
+	case !ntfyTopicRe.MatchString(n.Topic):
+		errs = append(errs, errors.New("approval.ntfy.topic: letters, digits, - and _ only, at most 64"))
+	case len(n.Topic) < 16 && n.Token == "":
+		errs = append(errs, errors.New("approval.ntfy.topic: anyone who knows the topic can read and answer the questions; use at least 16 random characters, or set a token"))
+	}
+	return errors.Join(errs...)
 }
 
 // Audit configures the SQLite audit store.
@@ -164,8 +205,17 @@ func (c *Config) normalize() error {
 	}
 	switch c.Approval.Mode {
 	case "auto", "tty", "ui", "deny":
+	case "ntfy":
+		if c.Approval.Ntfy == nil {
+			errs = append(errs, errors.New("approval.mode is ntfy but approval.ntfy is not set"))
+		}
 	default:
-		errs = append(errs, fmt.Errorf("approval.mode: unknown mode %q, want auto, tty, ui or deny", c.Approval.Mode))
+		errs = append(errs, fmt.Errorf("approval.mode: unknown mode %q, want auto, tty, ui, ntfy or deny", c.Approval.Mode))
+	}
+	if c.Approval.Ntfy != nil {
+		if err := c.Approval.Ntfy.normalize(); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	if c.Approval.Timeout == 0 {
 		c.Approval.Timeout = Duration(DefaultApprovalTimeout)
