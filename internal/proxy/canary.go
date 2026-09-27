@@ -70,7 +70,7 @@ func (p *Proxy) canaryTripped(st *sessionState, b ToolBinding, args json.RawMess
 		}
 	}
 	result := deniedResult(decision)
-	p.store.RecordCall(&audit.Call{
+	p.record(st, &audit.Call{
 		ID: audit.NewID(), SessionID: st.id, TS: started, Upstream: b.Upstream, Tool: b.Exposed, Args: args,
 		Decision: decision.Action, RuleID: decision.RuleID, Reason: decision.Reason,
 		Result: marshalResult(result), IsError: true, DurationMS: time.Since(started).Milliseconds(),

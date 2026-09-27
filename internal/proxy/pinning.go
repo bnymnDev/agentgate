@@ -433,7 +433,7 @@ func (p *Proxy) onQuarantinedCall(req mcp.Request) (*mcp.CallToolResult, bool) {
 	}
 	result := deniedResult(decision)
 	upstream, _, _ := p.Config().SplitTool(call.Params.Name)
-	p.store.RecordCall(&audit.Call{
+	p.record(st, &audit.Call{
 		ID: audit.NewID(), SessionID: st.id, TS: now, Upstream: upstream, Tool: call.Params.Name,
 		Args: call.Params.Arguments, Decision: decision.Action, RuleID: decision.RuleID, Reason: decision.Reason,
 		Result: marshalResult(result), IsError: true, CatalogHash: p.catalogHash(),

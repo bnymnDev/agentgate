@@ -14,6 +14,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 )
 
 // Defaults that apply when the config file leaves a field out.
@@ -43,9 +44,19 @@ type Config struct {
 	Notify          Notify        `yaml:"notify"`
 	Pinning         Pinning       `yaml:"pinning"`
 	Canaries        Canaries      `yaml:"canaries"`
+	Telemetry       Telemetry     `yaml:"telemetry"`
 
 	// Path is the file the config was read from. It is not part of the file.
 	Path string `yaml:"-"`
+}
+
+// Telemetry exports agentgate's view of every call to an observability
+// backend.
+type Telemetry struct {
+	// OTLP sends a span per tool call over OTLP/HTTP (JSON). The standard
+	// OTEL_EXPORTER_OTLP_* and OTEL_SERVICE_NAME variables are honoured, and
+	// setting OTEL_EXPORTER_OTLP_ENDPOINT is enough to switch it on.
+	OTLP telemetry.Config `yaml:"otlp"`
 }
 
 // Approval configures what happens to calls a rule marked "ask".
@@ -310,6 +321,10 @@ func (c *Config) normalize() error {
 	}
 	if err := c.Canaries.normalize(c.Audit.Path); err != nil {
 		errs = append(errs, err)
+	}
+	c.Telemetry.OTLP.Endpoint = ExpandEnv(c.Telemetry.OTLP.Endpoint)
+	for k, v := range c.Telemetry.OTLP.Headers {
+		c.Telemetry.OTLP.Headers[k] = ExpandEnv(v)
 	}
 	return errors.Join(errs...)
 }

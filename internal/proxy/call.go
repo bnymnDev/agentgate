@@ -15,6 +15,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 )
 
 // toolHandler returns the downstream handler for one proxied tool.
@@ -90,7 +91,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		rec.DurationMS = time.Since(started).Milliseconds()
 		result := deniedResult(decision)
 		rec.Result = marshalResult(result)
-		p.store.RecordCall(rec)
+		p.record(st, rec)
 		p.log.Info("call denied",
 			"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
 		event.Event, event.Decision = config.EventDeny, decision
@@ -118,7 +119,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		result = errorResult("agentgate: " + timeoutErr.Error())
 		rec.Result = marshalResult(result)
 		rec.Labels = p.forwarded(&cfg.Policy, st, call, nil, audit.TokensEst(args), started)
-		p.store.RecordCall(rec)
+		p.record(st, rec)
 		p.log.Warn("call timed out", "session", st.id, "tool", b.Exposed, "timeout", timeout.String())
 		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: timeoutErr.Error()}
 		p.notify.emit(event)
@@ -128,7 +129,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		rec.IsError = true
 		rec.Error = err.Error()
 		rec.Labels = p.forwarded(&cfg.Policy, st, call, nil, audit.TokensEst(args), started)
-		p.store.RecordCall(rec)
+		p.record(st, rec)
 		p.log.Warn("call failed", "session", st.id, "tool", b.Exposed, "error", err)
 		event.Event, event.Decision = config.EventError, policy.Decision{Action: policy.ActionAllow, Reason: err.Error()}
 		p.notify.emit(event)
@@ -155,7 +156,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 	}
 
 	rec.Labels = p.forwarded(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
-	p.store.RecordCall(rec)
+	p.record(st, rec)
 	return result, nil
 }
 
@@ -383,4 +384,31 @@ func (p *Proxy) ForwardJSON(ctx context.Context, exposed string, args json.RawMe
 		return nil, err
 	}
 	return json.Marshal(result)
+}
+
+// record writes a call to the audit log and hands it to the telemetry
+// exporter. Every call agentgate answers goes through here, whatever
+// answered it.
+func (p *Proxy) record(st *sessionState, rec *audit.Call) {
+	p.store.RecordCall(rec)
+	if p.telemetry == nil {
+		return
+	}
+	p.telemetry.Export(telemetry.Span{
+		CallID:      rec.ID,
+		SessionID:   rec.SessionID,
+		Tool:        rec.Tool,
+		Upstream:    rec.Upstream,
+		HostName:    st.hostName,
+		HostVersion: st.hostVersion,
+		Start:       rec.TS,
+		Duration:    time.Duration(rec.DurationMS) * time.Millisecond,
+		Decision:    string(rec.Decision),
+		RuleID:      rec.RuleID,
+		Reason:      rec.Reason,
+		IsError:     rec.IsError,
+		Error:       rec.Error,
+		Shadow:      rec.Shadow,
+		Labels:      rec.Labels,
+	})
 }

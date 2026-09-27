@@ -16,6 +16,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/proxy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 	"github.com/bnymnDev/agentgate/internal/ui"
 )
 
@@ -87,6 +88,18 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 		}()
 	}
 
+	exporter, err := telemetry.New(cfg.Telemetry.OTLP, version(), log)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := exporter.Close(shutdown); err != nil {
+			log.Warn("flushing telemetry", "error", err)
+		}
+	}()
+
 	inbox := proxy.NewInbox()
 	transport := "stdio"
 	if opts.httpAddr != "" {
@@ -99,6 +112,7 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 		Logger:              log,
 		Approver:            buildApprover(ctx, cfg, inbox, opts.uiAddr != "", log),
 		DownstreamTransport: transport,
+		Telemetry:           exporter,
 	})
 	if err != nil {
 		return err

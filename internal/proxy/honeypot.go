@@ -71,7 +71,7 @@ func (p *Proxy) honeypotHandler(name string) mcp.ToolHandler {
 		}
 
 		result := deniedResult(decision)
-		p.store.RecordCall(&audit.Call{
+		p.record(st, &audit.Call{
 			ID: audit.NewID(), SessionID: st.id, TS: now,
 			Upstream: "agentgate", Tool: name, Args: args,
 			Decision: decision.Action, RuleID: decision.RuleID, Reason: decision.Reason,

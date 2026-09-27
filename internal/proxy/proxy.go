@@ -23,6 +23,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/telemetry"
 )
 
 // Version is stamped into the implementation agentgate advertises. It is
@@ -31,12 +32,13 @@ var Version = "dev"
 
 // Proxy fronts one or more upstream MCP servers.
 type Proxy struct {
-	log      *slog.Logger
-	store    *audit.Store
-	redact   *audit.Redactor
-	approver Approver
-	notify   *notifier
-	canaries *canary.Store
+	log       *slog.Logger
+	store     *audit.Store
+	redact    *audit.Redactor
+	approver  Approver
+	notify    *notifier
+	canaries  *canary.Store
+	telemetry *telemetry.Exporter
 
 	// cfg is swapped wholesale on hot reload, so it is read under mu.
 	mu        sync.RWMutex
@@ -77,6 +79,8 @@ type Options struct {
 	// Pinning says what the proxy may do with the lockfile. The zero value
 	// follows the config.
 	Pinning PinningMode
+	// Telemetry receives a span for every call. Nil exports nothing.
+	Telemetry *telemetry.Exporter
 }
 
 // sessionState is what agentgate tracks per downstream connection. The call
@@ -154,6 +158,8 @@ func New(opts Options) (*Proxy, error) {
 		byName:   map[string]*upstream{},
 		done:     make(chan struct{}),
 		pinMode:  opts.Pinning,
+
+		telemetry: opts.Telemetry,
 	}
 	if p.approver == nil {
 		p.approver = DenyApprover{}
