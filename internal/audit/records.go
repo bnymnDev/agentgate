@@ -120,6 +120,20 @@ func (s *Store) SaveCatalog(raw []byte) string {
 	return hash
 }
 
+// LatestCatalog returns the tool catalog recorded most recently, which is the
+// best offline answer to "what tools do the servers offer".
+func (s *Store) LatestCatalog(ctx context.Context) (json.RawMessage, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT json FROM catalogs ORDER BY created_at DESC LIMIT 1`).Scan(&raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("no catalog recorded: %w", ErrNotFound)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(raw), nil
+}
+
 // Catalog returns a stored tool catalog by hash.
 func (s *Store) Catalog(ctx context.Context, hash string) (json.RawMessage, error) {
 	var raw string

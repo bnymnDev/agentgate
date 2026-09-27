@@ -255,8 +255,12 @@ type Stats struct {
 	Denied    int `json:"denied"`
 	Shadowed  int `json:"shadowed"`
 	Honeypots int `json:"honeypots"`
-	Errors    int `json:"errors"`
-	Tokens    int `json:"tokens_est"`
+	// Canaries counts calls stopped for carrying a canary out.
+	Canaries int `json:"canaries"`
+	// Quarantined counts calls to tools held back by pinning.
+	Quarantined int `json:"quarantined"`
+	Errors      int `json:"errors"`
+	Tokens      int `json:"tokens_est"`
 }
 
 // Stats aggregates the database, or the part of it since a time.
@@ -272,10 +276,12 @@ func (s *Store) Stats(ctx context.Context, since time.Time) (*Stats, error) {
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND decision = 'deny' AND shadow = 0),
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND shadow = 1),
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND rule_id = ?),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND rule_id = ?),
+		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND rule_id = ?),
 		       (SELECT COUNT(*) FROM calls WHERE ts >= ? AND is_error = 1 AND decision = 'allow'),
 		       (SELECT COALESCE(SUM(tokens_est), 0) FROM calls WHERE ts >= ?)`,
-		cut, cut, cut, cut, cut, policy.RuleHoneypot, cut, cut).
-		Scan(&st.Sessions, &st.Calls, &st.Denied, &st.Shadowed, &st.Honeypots, &st.Errors, &st.Tokens)
+		cut, cut, cut, cut, cut, policy.RuleHoneypot, cut, policy.RuleCanary, cut, policy.RuleQuarantine, cut, cut).
+		Scan(&st.Sessions, &st.Calls, &st.Denied, &st.Shadowed, &st.Honeypots, &st.Canaries, &st.Quarantined, &st.Errors, &st.Tokens)
 	if err != nil {
 		return nil, err
 	}

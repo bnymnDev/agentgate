@@ -61,6 +61,7 @@ untouched.`,
 		newMockCmd(g),
 		newInitCmd(),
 		newUninstallCmd(),
+		newDoctorCmd(g),
 	)
 	return root
 }

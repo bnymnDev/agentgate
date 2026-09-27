@@ -13,7 +13,7 @@ func newPolicyCmd(g *globals) *cobra.Command {
 		Use:   "policy",
 		Short: "Work with the policy file",
 	}
-	cmd.AddCommand(newPolicyValidateCmd(g), newPolicySuggestCmd(g),
+	cmd.AddCommand(newPolicyValidateCmd(g), newPolicyLintCmd(g), newPolicySuggestCmd(g),
 		newPolicyPacksCmd(), newPolicyPackCmd(), newPolicyAddCmd(g), newPolicyRemoveCmd(g))
 	return cmd
 }
