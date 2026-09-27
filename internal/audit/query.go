@@ -38,6 +38,7 @@ func (s *Store) ListSessions(ctx context.Context, f SessionFilter) ([]*Session, 
 	args = append(args, limit)
 	q := fmt.Sprintf(`
 		SELECT s.id, s.started_at, s.ended_at, s.host_name, s.host_version, s.downstream_transport,
+		       s.catalog_hash,
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id),
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id AND c.decision = 'deny')
 		FROM sessions s %s
@@ -70,7 +71,7 @@ func scanSession(sc scanner) (*Session, error) {
 		ended   sql.NullInt64
 	)
 	if err := sc.Scan(&sess.ID, &started, &ended, &sess.HostName, &sess.HostVersion,
-		&sess.DownstreamTransport, &sess.Calls, &sess.Denied); err != nil {
+		&sess.DownstreamTransport, &sess.CatalogHash, &sess.Calls, &sess.Denied); err != nil {
 		return nil, err
 	}
 	sess.StartedAt = time.UnixMilli(started)
@@ -86,6 +87,7 @@ func scanSession(sc scanner) (*Session, error) {
 func (s *Store) GetSession(ctx context.Context, id string) (*Session, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT s.id, s.started_at, s.ended_at, s.host_name, s.host_version, s.downstream_transport,
+		       s.catalog_hash,
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id),
 		       (SELECT COUNT(*) FROM calls c WHERE c.session_id = s.id AND c.decision = 'deny')
 		FROM sessions s
@@ -177,9 +179,7 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 	}
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
-		SELECT id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
-		       reason, result_json, result_hash, is_error, duration_ms, tokens_est,
-		       result_truncated, error, shadow
+		SELECT `+callColumns+`
 		FROM calls %s ORDER BY ts ASC, id ASC LIMIT ?`, where), args...)
 	if err != nil {
 		return nil, err
@@ -198,17 +198,18 @@ func (s *Store) ListCalls(ctx context.Context, f CallFilter) ([]*Call, error) {
 
 // GetCall looks up a single call by id.
 func (s *Store) GetCall(ctx context.Context, id string) (*Call, error) {
-	row := s.db.QueryRowContext(ctx, `
-		SELECT id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
-		       reason, result_json, result_hash, is_error, duration_ms, tokens_est,
-		       result_truncated, error, shadow
-		FROM calls WHERE id = ?`, id)
+	row := s.db.QueryRowContext(ctx, `SELECT `+callColumns+` FROM calls WHERE id = ?`, id)
 	c, err := scanCall(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("call %q: %w", id, ErrNotFound)
 	}
 	return c, err
 }
+
+// callColumns is the column list scanCall reads, in its order.
+const callColumns = `id, session_id, ts, upstream, tool, args_json, args_hash, decision, rule_id,
+	reason, result_json, result_hash, is_error, duration_ms, tokens_est,
+	result_truncated, error, shadow, labels, catalog_hash, seq, prev_hash, row_hash`
 
 func scanCall(sc scanner) (*Call, error) {
 	var (
@@ -220,10 +221,13 @@ func scanCall(sc scanner) (*Call, error) {
 		isErr      int
 		truncated  int
 		shadow     int
+		labels     string
+		seq        sql.NullInt64
 	)
 	if err := sc.Scan(&c.ID, &c.SessionID, &ts, &c.Upstream, &c.Tool, &argsJSON, &c.ArgsHash,
 		&decision, &c.RuleID, &c.Reason, &resultJSON, &c.ResultHash, &isErr,
-		&c.DurationMS, &c.TokensEst, &truncated, &c.Error, &shadow); err != nil {
+		&c.DurationMS, &c.TokensEst, &truncated, &c.Error, &shadow,
+		&labels, &c.CatalogHash, &seq, &c.PrevHash, &c.RowHash); err != nil {
 		return nil, err
 	}
 	c.TS = time.UnixMilli(ts)
@@ -231,6 +235,10 @@ func scanCall(sc scanner) (*Call, error) {
 	c.IsError = isErr != 0
 	c.ResultTruncated = truncated != 0
 	c.Shadow = shadow != 0
+	c.Seq = seq.Int64
+	if labels != "" {
+		c.Labels = strings.Split(labels, ",")
+	}
 	if argsJSON != "" {
 		c.Args = json.RawMessage(argsJSON)
 	}

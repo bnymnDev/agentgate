@@ -78,8 +78,17 @@ func Open(ctx context.Context, opts Options) (*Store, error) {
 				return nil, fmt.Errorf("audit: creating %s: %w", dir, err)
 			}
 		}
-	} else if _, err := os.Stat(opts.Path); err != nil {
-		return nil, fmt.Errorf("audit: %w", err)
+	} else {
+		if _, err := os.Stat(opts.Path); err != nil {
+			return nil, fmt.Errorf("audit: %w", err)
+		}
+		// A database last written by an older agentgate lacks the newest
+		// columns, and every query would fail on it. Bring it up to date
+		// first; adding columns does not disturb a proxy that is writing to
+		// it at the same time.
+		if err := upgrade(ctx, opts.Path, opts.Logger); err != nil {
+			return nil, err
+		}
 	}
 	db, err := sql.Open("sqlite", dsn(opts.Path, opts.ReadOnly))
 	if err != nil {
@@ -124,6 +133,10 @@ func dsn(path string, readOnly bool) string {
 	q.Add("_pragma", "journal_mode(WAL)")
 	q.Add("_pragma", "foreign_keys(1)")
 	q.Add("_pragma", "synchronous(NORMAL)")
+	// Writers take the write lock when their transaction begins, not when it
+	// first writes: appending to the hash chain reads the head and writes the
+	// next link, and no other process may slip a link in between.
+	q.Set("_txlock", "immediate")
 	if readOnly {
 		q.Set("mode", "ro")
 	}
@@ -208,22 +221,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
 		return fmt.Errorf("audit: creating migration table: %w", err)
 	}
-	applied := map[string]bool{}
-	rows, err := s.db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	applied, err := appliedMigrations(ctx, s.db)
 	if err != nil {
 		return fmt.Errorf("audit: reading migration table: %w", err)
-	}
-	for rows.Next() {
-		var v string
-		if err := rows.Scan(&v); err != nil {
-			rows.Close()
-			return err
-		}
-		applied[v] = true
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
 	}
 
 	names, err := migrationNames()
@@ -243,6 +243,18 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
+		// Another process may have applied it since the list was read; the
+		// transaction holds the write lock, so this second look is final.
+		var done int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&done); err != nil {
+			tx.Rollback()
+			return fmt.Errorf("audit: migration %s: %w", version, err)
+		}
+		if done > 0 {
+			tx.Rollback()
+			continue
+		}
 		if _, err := tx.ExecContext(ctx, string(body)); err != nil {
 			tx.Rollback()
 			return fmt.Errorf("audit: migration %s: %w", version, err)
@@ -259,6 +271,70 @@ func (s *Store) migrate(ctx context.Context) error {
 		s.log.Info("applied audit migration", "version", version)
 	}
 	return nil
+}
+
+// upgrade applies pending migrations to an existing database, and nothing
+// else: no retention job, no write queue. A database that is already up to
+// date is only read, so this works on one the user cannot write to.
+func upgrade(ctx context.Context, path string, log *slog.Logger) error {
+	ro, err := sql.Open("sqlite", dsn(path, true))
+	if err != nil {
+		return fmt.Errorf("audit: opening %s: %w", path, err)
+	}
+	applied, err := appliedMigrations(ctx, ro)
+	ro.Close()
+	if err != nil {
+		return fmt.Errorf("audit: reading %s: %w", path, err)
+	}
+	names, err := migrationNames()
+	if err != nil {
+		return err
+	}
+	pending := false
+	for _, name := range names {
+		pending = pending || !applied[strings.TrimSuffix(name, ".sql")]
+	}
+	if !pending {
+		return nil
+	}
+	db, err := sql.Open("sqlite", dsn(path, false))
+	if err != nil {
+		return fmt.Errorf("audit: opening %s: %w", path, err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(1)
+	s := &Store{db: db, log: log}
+	if err := s.migrate(ctx); err != nil {
+		return fmt.Errorf("%w (the database was written by an older agentgate and could not be upgraded)", err)
+	}
+	return nil
+}
+
+// appliedMigrations lists the migrations a database has had. A database
+// without the bookkeeping table has had none.
+func appliedMigrations(ctx context.Context, db *sql.DB) (map[string]bool, error) {
+	applied := map[string]bool{}
+	var n int
+	if err := db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`).Scan(&n); err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return applied, nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var v string
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		applied[v] = true
+	}
+	return applied, rows.Err()
 }
 
 // SchemaVersion returns the newest migration applied to the database.

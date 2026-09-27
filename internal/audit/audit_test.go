@@ -34,7 +34,7 @@ func TestMigrationsAreIdempotent(t *testing.T) {
 	first := openTemp(t, Options{Path: path})
 	v, err := first.SchemaVersion(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "0002_shadow", v)
+	require.Equal(t, "0003_chain", v)
 
 	// Opening the same file again must not try to re-apply anything.
 	second := openTemp(t, Options{Path: path})
@@ -68,7 +68,7 @@ func TestOlderDatabaseIsUpgraded(t *testing.T) {
 	store := openTemp(t, Options{Path: path})
 	v, err := store.SchemaVersion(ctx)
 	require.NoError(t, err)
-	require.Equal(t, "0002_shadow", v)
+	require.Equal(t, "0003_chain", v)
 
 	calls, err := store.ListCalls(ctx, CallFilter{SessionID: "old"})
 	require.NoError(t, err)
@@ -122,7 +122,7 @@ func TestRetentionRemovesOldSessionsAndTheirCalls(t *testing.T) {
 	recent := &Session{ID: NewID(), StartedAt: time.Now()}
 	require.NoError(t, store.StartSession(ctx, old))
 	require.NoError(t, store.StartSession(ctx, recent))
-	store.RecordCall(&Call{SessionID: old.ID, Tool: "gone", Decision: policy.ActionAllow})
+	store.RecordCall(&Call{SessionID: old.ID, TS: old.StartedAt, Tool: "gone", Decision: policy.ActionAllow})
 	require.Eventually(t, func() bool {
 		calls, err := store.ListCalls(ctx, CallFilter{SessionID: old.ID})
 		return err == nil && len(calls) == 1
