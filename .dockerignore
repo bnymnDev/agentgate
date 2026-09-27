@@ -1,0 +1,8 @@
+bin/
+dist/
+.agentgate/
+*.db
+*.db-shm
+*.db-wal
+docs/demo/*.gif
+docs/brand/*.png

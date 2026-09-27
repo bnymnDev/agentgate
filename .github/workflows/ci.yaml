@@ -70,6 +70,51 @@ jobs:
             exit 1
           fi
 
+  docker:
+    name: container image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: docker build
+        run: docker build --build-arg VERSION=ci -t agentgate:ci .
+      - name: the image runs
+        run: docker run --rm agentgate:ci --version
+
+  action:
+    name: GitHub Action works
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          check-latest: true
+      - name: build the binary the action would download
+        run: go build -o "$RUNNER_TEMP/agentgate" ./cmd/agentgate
+      - uses: ./
+        with:
+          binary: ${{ runner.temp }}/agentgate
+          config: testdata/policies/default.yaml
+      - name: agentgate is on the PATH
+        run: agentgate --version
+      - name: a session to report on
+        run: |
+          go build -o "$RUNNER_TEMP/echo-server" ./testdata/servers/echo
+          mkdir -p "$RUNNER_TEMP/report"
+          cat > "$RUNNER_TEMP/report/agentgate.yaml" <<EOF
+          upstreams:
+            - name: demo
+              stdio: ["$RUNNER_TEMP/echo-server"]
+          audit:
+            path: $RUNNER_TEMP/report/audit.db
+          policy:
+            packs: [baseline]
+          EOF
+          agentgate doctor -c "$RUNNER_TEMP/report/agentgate.yaml"
+      - uses: ./report
+        with:
+          config: ${{ runner.temp }}/report/agentgate.yaml
+
   lint:
     name: golangci-lint
     runs-on: ubuntu-latest

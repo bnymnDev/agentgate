@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"regexp"
@@ -46,6 +47,22 @@ tokens, sessions, and rule:<id> for how often one rule decided.`,
 				return err
 			}
 			store, err := g.openStore(cmd.Context(), cfg)
+			if errors.Is(err, errNoAuditLog) && session == "" {
+				// Nothing recorded is a valid answer: every counter is zero,
+				// which is what the thresholds get to see.
+				fmt.Fprintf(cmd.ErrOrStderr(), "no audit database at %s yet; nothing recorded\n", cfg.Audit.Path)
+				if failOn != "" {
+					crossed, err := checkThresholds(failOn, &audit.Stats{}, nil)
+					if err != nil {
+						return err
+					}
+					if len(crossed) > 0 {
+						fmt.Fprintf(cmd.ErrOrStderr(), "threshold crossed: %s\n", strings.Join(crossed, ", "))
+						return errExitDenied
+					}
+				}
+				return nil
+			}
 			if err != nil {
 				return err
 			}

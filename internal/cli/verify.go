@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,8 +12,9 @@ import (
 
 func newVerifyCmd(g *globals) *cobra.Command {
 	var (
-		anchor string
-		asJSON bool
+		anchor    string
+		asJSON    bool
+		missingOK bool
 	)
 	cmd := &cobra.Command{
 		Use:   "verify",
@@ -47,6 +49,10 @@ Exits 1 when the chain is broken, so it can run in CI or from cron.`,
 				expect = &l
 			}
 			store, err := g.openStore(cmd.Context(), cfg)
+			if errors.Is(err, errNoAuditLog) && missingOK && expect == nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "no audit database at %s yet; nothing to verify\n", cfg.Audit.Path)
+				return nil
+			}
 			if err != nil {
 				return err
 			}
@@ -107,5 +113,6 @@ Exits 1 when the chain is broken, so it can run in CI or from cron.`,
 	}
 	cmd.Flags().StringVar(&anchor, "anchor", "", "a head printed by an earlier verify, as seq:hash, that must still be in the chain")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the report as JSON")
+	cmd.Flags().BoolVar(&missingOK, "missing-ok", false, "succeed when there is no audit database yet, instead of failing")
 	return cmd
 }

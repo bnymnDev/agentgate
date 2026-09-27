@@ -1,0 +1,107 @@
+name: agentgate
+description: Put agentgate in front of the MCP tools an agent uses in a workflow, and check the policy on the way in.
+author: Bünyamin Ulupinar
+branding:
+  icon: shield
+  color: gray-dark
+
+inputs:
+  version:
+    description: The agentgate release to install, e.g. v0.4.0, or latest.
+    default: latest
+  binary:
+    description: Use this agentgate binary instead of downloading one.
+    default: ""
+  config:
+    description: An agentgate.yaml to validate and lint. Optional.
+    default: ""
+  lint:
+    description: What a lint warning does — fail the step, warn, or off.
+    default: fail
+
+outputs:
+  path:
+    description: Where the agentgate binary is.
+    value: ${{ steps.install.outputs.path }}
+  version:
+    description: The version installed.
+    value: ${{ steps.install.outputs.version }}
+
+runs:
+  using: composite
+  steps:
+    - id: install
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        BINARY: ${{ inputs.binary }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        dest="$RUNNER_TEMP/agentgate-bin"
+        mkdir -p "$dest"
+        exe=agentgate
+        [ "$RUNNER_OS" = "Windows" ] && exe=agentgate.exe
+
+        if [ -n "$BINARY" ]; then
+          cp "$BINARY" "$dest/$exe"
+          chmod +x "$dest/$exe"
+        else
+          if [ "$VERSION" = "latest" ]; then
+            # The redirect names the newest release without using the API.
+            VERSION=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/bnymnDev/agentgate/releases/latest)
+            VERSION=${VERSION##*/}
+          fi
+          case "$RUNNER_OS" in
+            Linux) os=linux ;; macOS) os=darwin ;; Windows) os=windows ;;
+            *) echo "unsupported runner OS $RUNNER_OS" >&2; exit 1 ;;
+          esac
+          case "$RUNNER_ARCH" in
+            X64) arch=amd64 ;; ARM64) arch=arm64 ;;
+            *) echo "unsupported runner architecture $RUNNER_ARCH" >&2; exit 1 ;;
+          esac
+          ext=tar.gz
+          [ "$os" = "windows" ] && ext=zip
+          asset="agentgate_${VERSION#v}_${os}_${arch}.${ext}"
+          base="https://github.com/bnymnDev/agentgate/releases/download/${VERSION}"
+          work="$RUNNER_TEMP/agentgate-download"
+          mkdir -p "$work"
+          curl -fsSL -o "$work/$asset" "$base/$asset"
+          curl -fsSL -o "$work/checksums.txt" "$base/checksums.txt"
+          want=$(grep " ${asset}\$" "$work/checksums.txt" | cut -d' ' -f1)
+          if command -v sha256sum >/dev/null; then
+            got=$(sha256sum "$work/$asset" | cut -d' ' -f1)
+          else
+            got=$(shasum -a 256 "$work/$asset" | cut -d' ' -f1)
+          fi
+          if [ -z "$want" ] || [ "$want" != "$got" ]; then
+            echo "checksum mismatch for $asset" >&2; exit 1
+          fi
+          if [ "$ext" = "zip" ]; then
+            unzip -q -o "$work/$asset" -d "$work/x"
+          else
+            mkdir -p "$work/x" && tar -xzf "$work/$asset" -C "$work/x"
+          fi
+          cp "$work/x/$exe" "$dest/$exe"
+        fi
+
+        echo "$dest" >> "$GITHUB_PATH"
+        echo "path=$dest/$exe" >> "$GITHUB_OUTPUT"
+        installed=$("$dest/$exe" --version | awk '{print $3}')
+        echo "version=$installed" >> "$GITHUB_OUTPUT"
+        echo "agentgate $installed installed at $dest/$exe"
+
+    - if: inputs.config != ''
+      shell: bash
+      env:
+        CONFIG: ${{ inputs.config }}
+        LINT: ${{ inputs.lint }}
+        AGENTGATE: ${{ steps.install.outputs.path }}
+      run: |
+        set -euo pipefail
+        "$AGENTGATE" policy validate "$CONFIG"
+        case "$LINT" in
+          off) ;;
+          warn) "$AGENTGATE" policy lint "$CONFIG" || echo "::warning::agentgate policy lint found problems in $CONFIG" ;;
+          *) "$AGENTGATE" policy lint "$CONFIG" ;;
+        esac

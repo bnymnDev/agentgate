@@ -127,10 +127,21 @@ func (g *globals) openStore(ctx context.Context, cfg *config.Config) (*audit.Sto
 		ReadOnly: true,
 	})
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, fmt.Errorf("no audit database at %s yet — run agentgate and make a tool call first", cfg.Audit.Path)
+		return nil, noAuditLogError{cfg.Audit.Path}
 	}
 	return store, err
 }
+
+// errNoAuditLog marks a config whose audit database does not exist yet.
+var errNoAuditLog = errors.New("nothing recorded")
+
+type noAuditLogError struct{ path string }
+
+func (e noAuditLogError) Error() string {
+	return fmt.Sprintf("no audit database at %s yet — run agentgate and make a tool call first", e.path)
+}
+
+func (e noAuditLogError) Is(target error) bool { return target == errNoAuditLog }
 
 // openStoreForWriting opens the audit database for the proxy: migrations run
 // and the retention job fires.
