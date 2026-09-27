@@ -20,6 +20,10 @@ func newCheckCmd(g *globals) *cobra.Command {
 		counts   int
 		at       string
 		repeats  int
+		host     string
+		labels   []string
+		called   []string
+		hints    map[string]string
 	)
 	cmd := &cobra.Command{
 		Use:   "check",
@@ -27,6 +31,11 @@ func newCheckCmd(g *globals) *cobra.Command {
 		Long: `Ask the policy what it would do with a call, without connecting to anything.
 
 	agentgate check --tool db.query --args '{"sql":"DROP TABLE users"}'
+
+Rules that look at the session or the host can be tested by describing them:
+
+	agentgate check --tool mail.send --label untrusted-input --label private-data
+	agentgate check --tool shell.deploy --called shell.test --host ci-bot
 
 Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`,
 		Args: cobra.NoArgs,
@@ -51,15 +60,42 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 				when = parsed
 			}
 			upstream, name, _ := cfg.SplitTool(tool)
-			call := &policy.Call{
-				Tool:     tool,
-				Upstream: upstream,
-				ToolName: name,
-				Args:     args,
-				Counts:   policy.Counts{Session: counts, Tool: counts, Repeats: repeats},
-				At:       when,
-				Frozen:   killswitch.Engaged(cfg.FreezeFile()),
+			annotations, err := parseHints(hints)
+			if err != nil {
+				return err
 			}
+			call := &policy.Call{
+				Tool:        tool,
+				Upstream:    upstream,
+				ToolName:    name,
+				Args:        args,
+				Counts:      policy.Counts{Session: counts, Tool: counts, Repeats: repeats},
+				At:          when,
+				Frozen:      killswitch.Engaged(cfg.FreezeFile()),
+				Annotations: annotations,
+			}
+			call.Host.Name, call.Host.Version, _ = strings.Cut(host, "/")
+			for _, l := range labels {
+				if !policy.ValidLabel(l) {
+					return fmt.Errorf("--label %q: labels are lower-case letters, digits, - and _", l)
+				}
+			}
+			var track policy.Tracker
+			track.Earn(labels...)
+			for _, c := range called {
+				var up, nm string
+				if u, t, ok := strings.Cut(c, "."); ok && cfg.Upstream(u) != nil {
+					up, nm = u, t
+				} else {
+					up, nm, _ = cfg.SplitTool(c)
+				}
+				exposed := c
+				if u := cfg.Upstream(up); u != nil {
+					exposed = cfg.Prefixed(u, nm)
+				}
+				track.Forwarded(&policy.Call{Tool: exposed, Upstream: up, ToolName: nm}, 0, when)
+			}
+			call.Session = track.History()
 			decision := policy.Evaluate(&cfg.Policy, call)
 			shadow := cfg.Policy.IsShadow() && decision.Action != policy.ActionAllow
 
@@ -102,7 +138,43 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 	cmd.Flags().IntVar(&counts, "calls-so-far", 0, "pretend this many calls were already made, to test budgets")
 	cmd.Flags().IntVar(&repeats, "repeats", 0, "pretend the identical call was just made this many times, to test the loop guard")
 	cmd.Flags().StringVar(&at, "at", "", "evaluate as if the call were made at this time, e.g. \"2026-09-04 16:30\" or \"friday 17:00\", to test time rules")
+	cmd.Flags().StringVar(&host, "host", "", "the host that opened the session, as name or name/version, to test host.* rules")
+	cmd.Flags().StringArrayVar(&labels, "label", nil, "a label the session already carries (repeatable)")
+	cmd.Flags().StringArrayVar(&called, "called", nil, "a tool the session already called, as upstream.tool (repeatable)")
+	cmd.Flags().StringToStringVar(&hints, "annotations", nil, "what the server says about the tool, e.g. read_only=true,destructive=false")
 	return cmd
+}
+
+// parseHints turns --annotations into the policy's view of a tool's hints.
+func parseHints(hints map[string]string) (policy.Annotations, error) {
+	var a policy.Annotations
+	for k, v := range hints {
+		if k == "title" {
+			a.Title = v
+			continue
+		}
+		var b bool
+		switch strings.ToLower(v) {
+		case "true", "yes", "1":
+			b = true
+		case "false", "no", "0":
+		default:
+			return a, fmt.Errorf("--annotations %s=%s: want true or false", k, v)
+		}
+		switch k {
+		case "read_only":
+			a.ReadOnly = &b
+		case "destructive":
+			a.Destructive = &b
+		case "idempotent":
+			a.Idempotent = &b
+		case "open_world":
+			a.OpenWorld = &b
+		default:
+			return a, fmt.Errorf("--annotations: unknown hint %q, use read_only, destructive, idempotent, open_world or title", k)
+		}
+	}
+	return a, nil
 }
 
 // errExitDenied makes `agentgate check` fail when the call would be denied,

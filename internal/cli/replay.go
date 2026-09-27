@@ -52,7 +52,12 @@ configured now, and the fresh results are compared with the recorded ones.`,
 				return err
 			}
 
-			opts := replay.Options{Policy: &cfg.Policy, OnlyAllowed: onlyAllowed}
+			opts := replay.Options{
+				Policy:      &cfg.Policy,
+				OnlyAllowed: onlyAllowed,
+				Host:        policy.Host{Name: sess.HostName, Version: sess.HostVersion},
+				Annotations: catalogAnnotations(cmd.Context(), store),
+			}
 			if !dryRun {
 				p, err := connectForReplay(cmd.Context(), g, cfg)
 				if err != nil {
@@ -95,6 +100,13 @@ func printReplay(cmd *cobra.Command, report *replay.Report, dryRun bool) {
 	if !dryRun {
 		headers = append(headers, "RESULT")
 	}
+	labelled := false
+	for _, e := range report.Entries {
+		labelled = labelled || len(e.Labels) > 0
+	}
+	if labelled {
+		headers = append(headers, "LABELS")
+	}
 	t := newTable(out, headers...)
 	for i, e := range report.Entries {
 		change := ""
@@ -107,6 +119,12 @@ func printReplay(cmd *cobra.Command, report *replay.Report, dryRun bool) {
 		row := []any{i, truncate(e.Call.Tool, 32), e.Was.Action, e.Now.Action, change}
 		if !dryRun {
 			row = append(row, replayResultLabel(e))
+		}
+		if labelled {
+			row = append(row, "+"+strings.Join(e.Labels, " +"))
+			if len(e.Labels) == 0 {
+				row[len(row)-1] = ""
+			}
 		}
 		t.row(row...)
 	}
@@ -147,6 +165,26 @@ func dryRunLabel(dryRun bool) string {
 		return " — dry run, nothing is sent"
 	}
 	return ""
+}
+
+// catalogAnnotations looks up the tool annotations of the catalogs recorded in
+// the audit log, once per catalog.
+func catalogAnnotations(ctx context.Context, store *audit.Store) func(string) map[string]policy.Annotations {
+	cache := map[string]map[string]policy.Annotations{}
+	return func(hash string) map[string]policy.Annotations {
+		if hash == "" {
+			return nil
+		}
+		if a, ok := cache[hash]; ok {
+			return a
+		}
+		var a map[string]policy.Annotations
+		if raw, err := store.Catalog(ctx, hash); err == nil {
+			a, _ = proxy.AnnotationsFromCatalog(raw)
+		}
+		cache[hash] = a
+		return a
+	}
 }
 
 // connectForReplay brings up the upstreams without an audit store: a replay
