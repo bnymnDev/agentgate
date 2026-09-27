@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -386,3 +387,40 @@ const (
 	timeoutShort = 3 * time.Second
 	pollShort    = 10 * time.Millisecond
 )
+
+// TestHTTPClientIsOneSession: over Streamable HTTP a host on the current
+// protocol discovers the server on a throwaway session and makes its calls on
+// another. The audit log must still show one session, with the host's name
+// and every call in it.
+func TestHTTPClientIsOneSession(t *testing.T) {
+	h := setup(t, singleUpstream)
+	srv := httptest.NewServer(h.proxy.HTTPHandler())
+	defer srv.Close()
+
+	ctx := context.Background()
+	client, err := mcp.NewClient(&mcp.Implementation{Name: "http-host", Version: "3.0"}, nil).
+		Connect(ctx, &mcp.StreamableClientTransport{Endpoint: srv.URL}, nil)
+	require.NoError(t, err)
+	for _, text := range []string{"a", "b", "c"} {
+		res, err := client.CallTool(ctx, &mcp.CallToolParams{Name: "echo", Arguments: map[string]any{"text": text}})
+		require.NoError(t, err)
+		require.False(t, res.IsError)
+	}
+	require.NoError(t, client.Close())
+
+	calls := waitForCalls(t, h.store, 3)
+	sessions, err := h.store.ListSessions(ctx, audit.SessionFilter{})
+	require.NoError(t, err)
+	var withHost []*audit.Session
+	for _, s := range sessions {
+		if s.HostName == "http-host" {
+			withHost = append(withHost, s)
+		}
+	}
+	require.Len(t, withHost, 1, "one host connection is one session")
+	require.Equal(t, 3, withHost[0].Calls)
+	require.Equal(t, withHost[0].ID, calls[0].SessionID)
+	for _, s := range sessions {
+		require.NotZero(t, s.Calls, "no empty session rows from discovery")
+	}
+}

@@ -354,9 +354,12 @@ func (p *Proxy) RunStdio(ctx context.Context) error {
 }
 
 // HTTPHandler serves the Streamable HTTP transport for downstream hosts.
+// Sessions idle for half a day are closed: a host that went away without
+// saying so, and the throwaway session a server/discover runs on, would
+// otherwise stay open for as long as the process runs.
 func (p *Proxy) HTTPHandler() http.Handler {
 	return mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return p.server },
-		&mcp.StreamableHTTPOptions{Logger: p.log})
+		&mcp.StreamableHTTPOptions{Logger: p.log, SessionTimeout: 12 * time.Hour})
 }
 
 // Close ends every downstream session and closes every upstream.
