@@ -90,6 +90,12 @@ func newCanaryNewCmd(g *globals) *cobra.Command {
 			}
 			fmt.Fprintln(out, ")")
 			for _, v := range c.Values {
+				// With a decoy file, the file has the values; the terminal,
+				// which ends up in screenshots and recordings, gets enough
+				// to recognise them.
+				if c.File != "" {
+					v = masked(v)
+				}
 				fmt.Fprintf(out, "  %s\n", v)
 			}
 			if c.File != "" {
@@ -132,7 +138,7 @@ func newCanaryListCmd(g *globals) *cobra.Command {
 			t := newTable(cmd.OutOrStdout(), "ID", "LABEL", "KIND", "CREATED", "VALUE", "DECOY FILE")
 			for _, c := range list {
 				t.row(c.ID, orDash(c.Label), c.Kind, c.CreatedAt.Local().Format(time.DateOnly),
-					truncate(c.Values[0], 24), orDash(c.File))
+					masked(c.Values[0]), orDash(c.File))
 			}
 			t.flush()
 			return nil
@@ -140,6 +146,17 @@ func newCanaryListCmd(g *globals) *cobra.Command {
 	}
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print as JSON, values included")
 	return cmd
+}
+
+// masked shows enough of a canary's value to recognise it by, and not so
+// much that a secret scanner, or anyone looking at a screenshot, takes it for
+// the whole credential.
+func masked(v string) string {
+	r := []rune(v)
+	if len(r) <= 12 {
+		return string(r[:min(len(r), 3)]) + "…"
+	}
+	return string(r[:6]) + "…" + string(r[len(r)-4:])
 }
 
 func newCanaryRmCmd(g *globals) *cobra.Command {
