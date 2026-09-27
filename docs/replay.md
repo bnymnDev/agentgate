@@ -34,10 +34,27 @@ current policy are all the evaluator needs. The arguments are decoded exactly
 the way the live proxy decodes them, numbers included, so a replayed decision is
 the decision the proxy would have made.
 
-**Budgets are simulated as the walk proceeds.** If you add
-`calls_per_session: 10` and replay a session with 14 calls, the report shows the
-last four flipping to `deny` at exactly the point the session would have run
-out.
+**The session is simulated as the walk proceeds**, the way the proxy tracks a
+live one — with the same code. Budgets, the rate limit, the loop guard, the
+labels the session earns and the tools it has called all build up call by
+call; the recorded timestamp, the host that opened the session and what the
+servers said about their tools at the time (from the catalog the session was
+recorded with) are all there. So if you add `calls_per_session: 10` and replay
+a session with 14 calls, the report shows the last four flipping to `deny` at
+exactly the point the session would have run out, and a new label rule changes
+the decisions after the call that earns it:
+
+```
+ #  TOOL                 WAS    NOW    CHANGE          LABELS
+ 0  web__fetch           allow  allow                  +untrusted-input
+ 1  fs__read_file        allow  allow                  +private-data
+ 2  mail__send           allow  ask    allow → ask
+```
+
+A call counts as having gone through when the current policy allows it, or
+asks and the call went through at the time: the human who approved it then is
+taken to approve it again. Label rules that look at the result see the result
+as it was recorded (redacted, like everything in the log).
 
 Use it to answer:
 
@@ -115,6 +132,17 @@ agentgate diff "$BASELINE" "$LATEST" || echo "the agent did something new"
 
 Both commands take `--json` for anything you want to script.
 
+## Mock: serve the session instead of the servers
+
+```sh
+agentgate mock 01JD8K2M
+```
+
+turns a recorded session into an MCP server that answers every call with what
+the real server answered — the same tools, under the same names, nothing real
+behind them. Point an agent or a test at it and the session repeats, offline.
+See [integrations.md](integrations.md#tests-agentgate-mock).
+
 ## Stats: what did it actually do?
 
 ```sh
@@ -140,6 +168,18 @@ no-destructive-shell    deny      7
 stay-in-the-repo        deny      2
 honeypot                deny      1
 ```
+
+`--fail-on` turns stats into a check for CI and cron: it exits 1 when a
+threshold is crossed, and says which.
+
+```sh
+agentgate stats --since 1h --fail-on 'canary>0,honeypot>0,denied>=10'
+agentgate stats --fail-on 'rule:baseline/rm-rf-root>0'
+```
+
+The counters are `calls`, `denied`, `shadowed`, `honeypot`, `canary`,
+`quarantine`, `errors`, `tokens` and `sessions`, plus `rule:<id>` for how often
+one rule decided; the operators are `>`, `>=`, `<`, `<=`, `=` and `!=`.
 
 ## Suggest: write the allow-list for me
 

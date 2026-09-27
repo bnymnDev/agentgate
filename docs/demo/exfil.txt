@@ -1,0 +1,29 @@
+$ agentgate canary new --kind aws --label prod-aws --write .env.production
+canary cn_sbb69bwihq (aws, prod-aws)
+  AKIABF…HPT4
+  Vg3aGt…pNA/
+decoy written to /home/me/work/app/.env.production
+
+A call carrying it out is denied. Canaries live in /home/me/.agentgate/canaries.json.
+#sleep 2600
+#clear
+$ agentgate tail
+[2m── following /home/me/.agentgate/audit.db (ctrl-c to stop) ──[0m
+#sleep 900
+[2m18:44:43[0m  [32mallow  [0m [36mfs__read_file       [0m      1ms  [2mdefault allow[0m
+#sleep 800
+[2m18:44:44[0m  [32mallow  [0m [36mweb__fetch          [0m      1ms  [35m+injection-suspected +untrusted-input[0m
+#sleep 1000
+[2m18:44:45[0m  [31;1mCANARY [0m [36mmail__send_message  [0m      0ms  [2mcanary: prod-aws leaving base64-encoded; it is a f…[0m
+#sleep 1000
+[2m18:44:45[0m  [31;1mDENY   [0m [36mshell__exec         [0m      0ms  [2msuspected prompt injection: a tool result this ses…[0m
+#sleep 2200
+^C
+$ agentgate verify
+log      /home/me/.agentgate/audit.db
+chain    4 calls checked
+head     4:cff9ac75322ec48d8ac3f115cff56495767a50be767a0c8ce204aa5ac321c261
+
+OK: no recorded call has been changed, removed or reordered.
+Keep the head somewhere else and pass it to --anchor next time to also catch a cut-off end.
+#sleep 6000

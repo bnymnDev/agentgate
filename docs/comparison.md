@@ -73,14 +73,30 @@ agentgate constrains what a *tool call* can be, and knows the difference between
 
 Sandbox for the blast radius. agentgate for the semantics, and for the record.
 
+## Scan the servers once, before you install them
+
+MCP scanners read a server's tool definitions and flag the poisoned ones.
+Worth doing, and agentgate does the same scan — but a scan at install time
+answers the question once. A server that is clean on the day you install it
+and changes what its tools say next month passes a one-off scan by
+definition; that is the rug pull.
+
+agentgate pins every definition in a lockfile and checks it on every listing,
+including the moment a server announces a change, so the change is caught when
+it happens rather than at the next audit. And a scanner cannot see what a
+server *returns* — the web page, the issue comment with instructions hidden in
+it — or what the agent then tries to send out. agentgate sees both, because it
+is in the path of every call.
+
 ## Where agentgate is the wrong tool
 
 - **You want a model to judge whether a call is safe.** Explicitly a non-goal.
   Rules here are deterministic, and the reason for that is `replay`: a decision
   you cannot reproduce is a decision you cannot test.
-- **You want central policy for a team.** v0.3 is local, single-user, single
-  file. No server, no sync, no accounts.
-- **You want to govern prompts, sampling or resources.** v0.3 governs tools;
-  everything else passes through.
+- **You want central policy for a team.** agentgate is local, single-user,
+  single file. No server, no sync, no accounts — though a pack file in a
+  shared repository and the GitHub Action go a long way.
+- **You want to govern prompts, sampling or resources.** agentgate governs
+  tools; everything else passes through.
 - **You need an authenticated, internet-facing dashboard.** The UI is localhost
   by design and refuses to bind elsewhere without an explicit flag.

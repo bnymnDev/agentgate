@@ -22,6 +22,8 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/cli"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/packs"
+	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
 func main() {
@@ -34,9 +36,10 @@ func main() {
 		"flags":      flagSections(root),
 		"matchers":   matcherTable(),
 		"redactions": redactionList(),
+		"packs":      packTable(),
 	}
 	changed := 0
-	for _, file := range []string{"README.md", "docs/config.md", "docs/policies.md", "docs/replay.md"} {
+	for _, file := range []string{"README.md", "docs/config.md", "docs/policies.md", "docs/replay.md", "docs/guardrails.md", "docs/integrations.md"} {
 		n, err := rewrite(file, blocks)
 		if err != nil {
 			log.Fatal(err)
@@ -162,6 +165,38 @@ func matcherTable() string {
 		fmt.Fprintf(&b, "| %s | %s | <code>%s</code> |\n", r[0], r[1], strings.ReplaceAll(r[2], "|", "\\|"))
 	}
 	return b.String()
+}
+
+// packTable lists the packs that ship with agentgate.
+func packTable() string {
+	var b strings.Builder
+	b.WriteString("| Pack | Parameters | What it does |\n|---|---|---|\n")
+	for _, name := range packs.Names() {
+		src, _ := packs.Get(name)
+		head, err := policy.ReadPackHeader(src)
+		if err != nil {
+			log.Fatalf("pack %s: %v", name, err)
+		}
+		var params []string
+		for p, spec := range head.Params {
+			entry := "`" + p + "`"
+			if spec.Required {
+				entry += " (required)"
+			}
+			params = append(params, entry)
+		}
+		sort.Strings(params)
+		desc := strings.Join(strings.Fields(head.Description), " ")
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", name, orNone(strings.Join(params, ", ")), strings.ReplaceAll(desc, "|", "\\|"))
+	}
+	return b.String()
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "—"
+	}
+	return s
 }
 
 // redactionList prints the patterns that are applied to every recorded call.

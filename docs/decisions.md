@@ -221,10 +221,13 @@ is documented as the one place agentgate changes a result on purpose.
 
 ## Annotations apply the MCP defaults
 
-**A tool with an annotations object but no `destructiveHint` is destructive.**
+**A tool with an annotations object but no `destructiveHint` is destructive —
+unless it is read-only.**
 
 The MCP specification says the default for `destructiveHint` is `true` and for
-`openWorldHint` is `true`. A rule that asks before anything destructive should
+`openWorldHint` is `true`, and that `destructiveHint` only means something for
+a tool that is not read-only; a read-only tool is therefore never destructive,
+whatever else it says. A rule that asks before anything destructive should
 therefore ask before a tool whose server bothered to annotate it but did not
 say it was safe. A tool with no annotations at all is a different case: the
 server said nothing, every `annotations.*` path is missing, and no such rule
@@ -239,3 +242,105 @@ narrow a `deny`.
 Replay evaluates the recorded timestamp, so a replayed decision matches the
 live one; the golden tests pin the zone to UTC so that they do not depend on
 where they run.
+
+## Labels are applied after the call, not before
+
+**A label rule matches a call that has gone through, with its result.**
+
+Labelling on the way in would label a session for a call the policy denied,
+so a session that only *tried* to read a secret would be treated as one that
+had. Labelling on the way out means a label is a fact about what the session
+did, and it is what lets a label rule look at the result — "the tests passed",
+"the page had hidden text in it". The cost is that a label cannot influence
+the decision on the call that earns it; that is the right order anyway.
+
+## `excludes` instead of changing what `not_equals` means
+
+**Negative matchers keep "some value matches"; `includes` and `excludes` are
+new matchers that look at every value at once.**
+
+"Has the session run the tests?" is a question about a whole list, and
+`not_equals` answers a different one: it holds as soon as *any* value is not
+equal, which on `session.called` is as soon as the session has called
+anything else. Changing `not_equals` to mean "no value equals" would have
+fixed that and broken the reason it works the way it does — `not_prefix` on
+a wildcard path denies a batch as soon as one item is outside the directory.
+Two new matchers say what they mean and leave the old ones alone.
+
+## Your own rules come before the packs
+
+**Pack rules are appended after the rules in the config.**
+
+A pack is switched on wholesale, and every team has the one exception — the
+CI job that may reset a branch, the scratch directory that may be wiped. With
+your rules first, the exception is one rule above the pack; with the pack
+first, it would mean editing the pack. Pack rule ids carry the pack's name, so
+the audit log still says which of the two decided.
+
+## Pack parameters are substituted into the parsed YAML
+
+**A `{{param}}` is replaced value by value on the YAML node tree, never in the
+text.**
+
+Text substitution would let a parameter value — a path with a quote and a
+newline in it — add a rule to the pack, or remove one. Filling in scalar
+values after parsing makes that impossible, and a value that is a whole
+placeholder can take the type of what is put in, so `lt: "{{last_hour}}"`
+becomes a number.
+
+## Pinning warns by default
+
+**`pinning.mode` defaults to `warn`: tools are pinned and changes reported,
+and nothing is held back.**
+
+Holding back a changed tool is the stronger defence, and it changes what the
+host sees — which breaks the transparency promise for a user who never asked
+for it, and would do so the first time a server ships an ordinary update.
+`warn` costs nothing and records the change in the lockfile; `enforce` is one
+line away, and `agentgate init` points at it.
+
+## Canaries, honeypots and quarantine are not rules
+
+**All three stop a call before or instead of `Evaluate`, and all three hold in
+shadow mode.**
+
+They are tripwires. A rule is something you tune; there is no tuning that
+should let a planted credential leave, a call to a tool that does not exist go
+through, or a tool whose definition changed under you reach the model. Keeping
+them out of the evaluator also keeps it pure: it knows nothing of the catalog,
+the lockfile or the canary store. The kill switch holds in shadow mode for the
+same reason — shadow mode tries out a policy, and the kill switch is not part
+of one.
+
+## The audit log is a hash chain, and retention cuts only its front
+
+**Every call links to the one before it; pruning removes a prefix and leaves
+an anchor.**
+
+The audit log is the evidence of what an agent did, and evidence that can be
+edited without trace is not evidence. A chain makes every edit, deletion and
+insertion show. Pruning by session, as before, would have punched holes into
+the middle of the chain wherever a long session overlapped short ones, so
+retention now removes calls from the front, stops at the first call still
+within the period, and keeps the last removed link as the anchor. What a chain
+cannot show — its end being cut off — is what `verify --anchor` is for.
+
+## A stateless discover opens no session
+
+**On MCP protocol 2026-07-28 the audit session is opened by the first call,
+not by `server/discover`.**
+
+Discovery is stateless. Over Streamable HTTP it runs on a throwaway session of
+its own, and the calls that follow arrive on another; opening a session on the
+discover recorded every HTTP host twice, once as an empty session that never
+ended. The first call carries the host's identity in its `_meta` anyway.
+
+## Strip invisible characters only when asked
+
+**`strip_invisible` is off by default, and the scan that labels a session
+`injection-suspected` is always on.**
+
+Detection changes nothing the agent sees, so it can run everywhere; the label
+is what lets a policy act on it. Removing characters from a result changes the
+result, which is a policy decision like result redaction — and the audit log
+keeps the result as it came either way, because that is the evidence.
