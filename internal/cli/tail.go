@@ -172,6 +172,10 @@ func (w *lineWriter) write(c *audit.Call) {
 	switch {
 	case c.RuleID == policy.RuleHoneypot:
 		badge = w.paint(colourRed, "TRAP   ")
+	case c.RuleID == policy.RuleCanary:
+		badge = w.paint(colourRed, "CANARY ")
+	case c.RuleID == policy.RuleQuarantine:
+		badge = w.paint(colourRed, "HELD   ")
 	case c.Shadow:
 		badge = w.paint(colourPurple, "SHADOW ")
 	case c.Decision == policy.ActionDeny:
@@ -190,7 +194,17 @@ func (w *lineWriter) write(c *audit.Call) {
 	if c.Shadow {
 		detail = "would have " + pastTense(c.Decision) + ": " + c.Reason
 	}
-	if detail != "" {
+	if len(c.Labels) > 0 {
+		// What the session learned with this call matters more than the
+		// default reason it was allowed for.
+		earned := "+" + strings.Join(c.Labels, " +")
+		if c.RuleID == "" {
+			detail = earned
+		} else {
+			detail = earned + "  " + detail
+		}
+		detail = w.paint(colourPurple, truncate(detail, 70))
+	} else if detail != "" {
 		detail = w.dim(truncate(detail, 70))
 	}
 	line := fmt.Sprintf("%s  %s %-32s %6dms  %s",
