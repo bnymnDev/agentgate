@@ -44,6 +44,7 @@ untouched.`,
 	root.AddCommand(
 		newRunCmd(g),
 		newCheckCmd(g),
+		newTestCmd(g),
 		newSessionsCmd(g),
 		newShowCmd(g),
 		newTailCmd(g),

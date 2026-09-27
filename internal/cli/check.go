@@ -10,6 +10,7 @@ import (
 
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/policytest"
 )
 
 func newCheckCmd(g *globals) *cobra.Command {
@@ -59,13 +60,13 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 				}
 				when = parsed
 			}
-			upstream, name, _ := cfg.SplitTool(tool)
+			exposed, upstream, name := cfg.ResolveTool(tool)
 			annotations, err := parseHints(hints)
 			if err != nil {
 				return err
 			}
 			call := &policy.Call{
-				Tool:        tool,
+				Tool:        exposed,
 				Upstream:    upstream,
 				ToolName:    name,
 				Args:        args,
@@ -83,16 +84,7 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 			var track policy.Tracker
 			track.Earn(labels...)
 			for _, c := range called {
-				var up, nm string
-				if u, t, ok := strings.Cut(c, "."); ok && cfg.Upstream(u) != nil {
-					up, nm = u, t
-				} else {
-					up, nm, _ = cfg.SplitTool(c)
-				}
-				exposed := c
-				if u := cfg.Upstream(up); u != nil {
-					exposed = cfg.Prefixed(u, nm)
-				}
+				exposed, up, nm := cfg.ResolveTool(c)
 				track.Forwarded(&policy.Call{Tool: exposed, Upstream: up, ToolName: nm}, 0, when)
 			}
 			call.Session = track.History()
@@ -203,32 +195,11 @@ func parseArgs(raw string) (map[string]any, error) {
 
 func exampleTool(sep string) string { return "fs" + sep + "write_file" }
 
-// parseWhen understands a few spellings of a point in time: RFC3339, a date
-// with a time, a time alone (today), or a weekday with a time (the coming one).
+// parseWhen reads --at; see policytest.ParseWhen for what it understands.
 func parseWhen(s string) (time.Time, error) {
-	s = strings.TrimSpace(s)
-	for _, layout := range []string{time.RFC3339, "2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02"} {
-		if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
-			return t, nil
-		}
+	t, err := policytest.ParseWhen(s, time.Now())
+	if err != nil {
+		return t, fmt.Errorf("--at: %w", err)
 	}
-	now := time.Now()
-	if t, err := time.ParseInLocation("15:04", s, time.Local); err == nil {
-		return time.Date(now.Year(), now.Month(), now.Day(), t.Hour(), t.Minute(), 0, 0, time.Local), nil
-	}
-	fields := strings.Fields(strings.ToLower(s))
-	if len(fields) == 2 {
-		for d := time.Sunday; d <= time.Saturday; d++ {
-			if strings.HasPrefix(strings.ToLower(d.String()), fields[0]) {
-				clock, err := time.ParseInLocation("15:04", fields[1], time.Local)
-				if err != nil {
-					break
-				}
-				days := (int(d) - int(now.Weekday()) + 7) % 7
-				day := now.AddDate(0, 0, days)
-				return time.Date(day.Year(), day.Month(), day.Day(), clock.Hour(), clock.Minute(), 0, 0, time.Local), nil
-			}
-		}
-	}
-	return time.Time{}, fmt.Errorf("--at: cannot parse %q; use RFC3339, \"2006-01-02 15:04\", \"15:04\" or \"friday 17:00\"", s)
+	return t, nil
 }

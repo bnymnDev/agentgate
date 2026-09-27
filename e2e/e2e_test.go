@@ -315,6 +315,32 @@ func TestEndToEnd(t *testing.T) {
 	t.Run("policy validate accepts the config", func(t *testing.T) {
 		require.Contains(t, e.run(t, "policy", "validate"), "is valid")
 	})
+
+	t.Run("test runs policy tests and fails on a wrong expectation", func(t *testing.T) {
+		pass := filepath.Join(e.dir, "pass.test.yaml")
+		require.NoError(t, os.WriteFile(pass, []byte(`tests:
+  - name: rm -rf is denied
+    call: { tool: demo__exec, args: { command: "rm -rf /" } }
+    expect: { action: deny, rule: no-destructive-shell }
+  - name: echo goes through
+    call: { tool: demo.echo, args: { text: hi } }
+    expect: allow
+`), 0o600))
+		out := e.run(t, "test", pass)
+		require.Contains(t, out, "2 passed, 0 failed")
+
+		fail := filepath.Join(e.dir, "fail.test.yaml")
+		require.NoError(t, os.WriteFile(fail, []byte(`tests:
+  - name: rm -rf is allowed, which it is not
+    call: { tool: demo__exec, args: { command: "rm -rf /" } }
+    expect: allow
+`), 0o600))
+		cmd := exec.Command(e.agentgate, "test", "--config", e.configPath, fail)
+		out2, err := cmd.Output()
+		require.Error(t, err, "a failing test fails the command")
+		require.Contains(t, string(out2), "want allow, got deny")
+		require.Contains(t, string(out2), "0 passed, 1 failed")
+	})
 }
 
 // TestAgainstTheEverythingServer runs the same proxy in front of the reference

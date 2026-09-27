@@ -460,6 +460,19 @@ func (c *Config) SplitTool(exposed string) (upstream string, tool string, ok boo
 	return "", exposed, false
 }
 
+// ResolveTool reads a tool name the way a person writes one — as the host
+// sees it (fs__write_file) or as upstream.tool (fs.write_file) — and returns
+// the exposed name, the upstream and the upstream's own name for the tool.
+func (c *Config) ResolveTool(name string) (exposed, upstream, tool string) {
+	if u, t, ok := strings.Cut(name, "."); ok {
+		if up := c.Upstream(u); up != nil {
+			return c.Prefixed(up, t), u, t
+		}
+	}
+	upstream, tool, _ = c.SplitTool(name)
+	return name, upstream, tool
+}
+
 // Timeout returns the per-call timeout for an upstream.
 func (c *Config) Timeout(u *Upstream) time.Duration {
 	return u.Timeout.Or(c.CallTimeout.Or(DefaultCallTimeout))
