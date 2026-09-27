@@ -325,7 +325,7 @@ func TestToolsPage(t *testing.T) {
 
 	page := get(t, h, "/tools").Body.String()
 	require.Contains(t, page, "quarantined")
-	require.Contains(t, page, "⟦hidden: AB⟧", "hidden text is spelled out")
+	require.Contains(t, page, "«hidden: AB»", "hidden text is spelled out")
 	require.Contains(t, page, "Trust as it is now")
 
 	rec := httptest.NewRecorder()

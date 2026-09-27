@@ -302,7 +302,7 @@ func invisibleFinding(t textAt, strict bool) (Finding, bool) {
 	var parts []string
 	f := Finding{Kind: KindInvisible, Where: t.where}
 	if tags.Len() > 0 {
-		parts = append(parts, "text hidden in Unicode tag characters, which show as nothing but the model reads")
+		parts = append(parts, "text hidden in Unicode tag characters: invisible to you, read by the model")
 		f.Excerpt = tags.String()
 	}
 	if zeroWidth > 0 {
@@ -401,7 +401,7 @@ func dedupeFindings(in []Finding) []Finding {
 }
 
 // Reveal renders what a text hides: tag characters are spelled out in
-// ⟦hidden: …⟧, and every other invisible or reordering character is shown as
+// «hidden: …», and every other invisible or reordering character is shown as
 // its code point. What is left is exactly what the model reads.
 func Reveal(s string) string {
 	var (
@@ -410,7 +410,7 @@ func Reveal(s string) string {
 	)
 	flush := func() {
 		if tags.Len() > 0 {
-			b.WriteString("⟦hidden: " + tags.String() + "⟧")
+			b.WriteString("«hidden: " + tags.String() + "»")
 			tags.Reset()
 		}
 	}
@@ -423,10 +423,10 @@ func Reveal(s string) string {
 			continue
 		case isZeroWidth(r), isBidi(r):
 			flush()
-			fmt.Fprintf(&b, "⟦U+%04X⟧", r)
+			fmt.Fprintf(&b, "«U+%04X»", r)
 		case r < 0x20 && r != '\n' && r != '\t', r == 0x7F, r >= 0x80 && r < 0xA0:
 			flush()
-			fmt.Fprintf(&b, "⟦%#02x⟧", r)
+			fmt.Fprintf(&b, "«%#02x»", r)
 		default:
 			flush()
 			b.WriteRune(r)
