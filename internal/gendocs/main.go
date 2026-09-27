@@ -147,11 +147,14 @@ func matcherTable() string {
 		{"`equals`", "the value is exactly this", `args.dryRun: { equals: false }`},
 		{"`not_equals`", "the value is anything but this", `args.mode: { not_equals: "dry" }`},
 		{"`regex`", "the value matches this Go regular expression", `args.command: { regex: '\brm\s+-rf' }`},
+		{"`not_regex`", "the value does not match this regular expression", `args.sql: { not_regex: '(?i)\bwhere\b' }`},
 		{"`prefix`", "the value starts with this string", `args.path: { prefix: "/etc/" }`},
 		{"`not_prefix`", "the value does not start with this string", `args.path: { not_prefix: "/srv/app/" }`},
 		{"`in`", "the value is one of these", `args.env: { in: ["prod", "staging"] }`},
 		{"`gt`, `lt`", "the value is a number above / below this; both may be combined", `args.amount: { gt: 10, lt: 100 }`},
 		{"`exists`", "the path is present (`true`) or absent (`false`)", `args.dryRun: { exists: false }`},
+		{"`includes`", "one of the values — or one item of a list among them — is exactly this", `session.labels: { includes: private-data }`},
+		{"`excludes`", "no value, and no item of a list among them, is this; also holds when there is none", `session.called: { excludes: shell.test }`},
 	}
 	var b strings.Builder
 	b.WriteString("| Matcher | Holds when | Example |\n|---|---|---|\n")

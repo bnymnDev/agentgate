@@ -271,11 +271,14 @@ Matchers:
 | `equals` | the value is exactly this | <code>args.dryRun: { equals: false }</code> |
 | `not_equals` | the value is anything but this | <code>args.mode: { not_equals: "dry" }</code> |
 | `regex` | the value matches this Go regular expression | <code>args.command: { regex: '\brm\s+-rf' }</code> |
+| `not_regex` | the value does not match this regular expression | <code>args.sql: { not_regex: '(?i)\bwhere\b' }</code> |
 | `prefix` | the value starts with this string | <code>args.path: { prefix: "/etc/" }</code> |
 | `not_prefix` | the value does not start with this string | <code>args.path: { not_prefix: "/srv/app/" }</code> |
 | `in` | the value is one of these | <code>args.env: { in: ["prod", "staging"] }</code> |
 | `gt`, `lt` | the value is a number above / below this; both may be combined | <code>args.amount: { gt: 10, lt: 100 }</code> |
 | `exists` | the path is present (`true`) or absent (`false`) | <code>args.dryRun: { exists: false }</code> |
+| `includes` | one of the values — or one item of a list among them — is exactly this | <code>session.labels: { includes: private-data }</code> |
+| `excludes` | no value, and no item of a list among them, is this; also holds when there is none | <code>session.called: { excludes: shell.test }</code> |
 <!-- END:matchers -->
 
 Paths: `args.path`, `args.items[*].sku`, `tool`, `upstream`, `annotations.destructive`, `time.hour`, `time.weekday`. The whole language, including what happens when a path is missing, is in [docs/policies.md](docs/policies.md).
@@ -295,10 +298,23 @@ agentgate policy validate agentgate.yaml
 <!-- BEGIN:commands -->
 | Command | What it does |
 |---|---|
+| `canary` | Plant fake credentials and catch them leaving |
+| `canary list [flags]` | List the canaries |
+| `canary new [flags]` | Create a canary, and optionally the decoy file that holds it |
+| `canary rm <id-or-label> [flags]` | Retire a canary |
 | `check [flags]` | Dry-evaluate one call against the policy |
 | `diff <session-a> <session-b> [flags]` | Compare two recorded sessions |
+| `doctor [flags]` | Check that everything agentgate depends on is in order |
 | `freeze [reason...]` | Stop every agent: deny all tool calls until unfreeze |
+| `init [flags]` | Put agentgate in front of the MCP servers your hosts already use |
+| `lock [flags]` | Review and trust the tool definitions pinned in the lockfile |
+| `mock <session-id> [flags]` | Serve a recorded session as a stand-in MCP server |
 | `policy` | Work with the policy file |
+| `policy add <pack> [flags]` | Switch a policy pack on in the config file |
+| `policy lint [file] [flags]` | Find rules that never fire or let more through than they seem to |
+| `policy pack <name>` | Show a policy pack: what it does, its parameters and its rules |
+| `policy packs` | List the policy packs that ship with agentgate |
+| `policy remove <pack>` | Switch a policy pack off in the config file |
 | `policy suggest [flags]` | Write a deny-by-default policy from what the agent actually did |
 | `policy validate [file]` | Check that a config file parses and its rules make sense |
 | `replay <session-id> [flags]` | Re-run a recorded session through the current policy |
@@ -310,6 +326,8 @@ agentgate policy validate agentgate.yaml
 | `tail [flags]` | Watch tool calls scroll by, live |
 | `ui [flags]` | Browse the audit log in a browser |
 | `unfreeze` | Lift the kill switch |
+| `uninstall [host...] [flags]` | Take agentgate out from in front of a host's MCP servers |
+| `verify [flags]` | Prove the audit log has not been edited |
 <!-- END:commands -->
 
 Every flag: [docs/config.md](docs/config.md).

@@ -231,14 +231,39 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--log-level` | log level: debug, info, warn or error | `info` |
 | `-c, --config` | path to agentgate.yaml (default: ./agentgate.yaml, then ~/.agentgate/agentgate.yaml) |  |
 
+### `canary list [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print as JSON, values included |  |
+
+### `canary new [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--force` | overwrite the --write file if it exists |  |
+| `--kind` | what the canary looks like: aws, github, openai, stripe, password | `aws` |
+| `--label` | a name to recognise it by in alerts |  |
+| `--write` | write a decoy file holding the canary to this path |  |
+
+### `canary rm <id-or-label> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--delete-file` | also delete the decoy file it was written to |  |
+
 ### `check [flags]`
 
 | Flag | What it does | Default |
 |---|---|---|
+| `--annotations` | what the server says about the tool, e.g. read_only=true,destructive=false |  |
 | `--args` | tool arguments as a JSON object |  |
 | `--at` | evaluate as if the call were made at this time, e.g. "2026-09-04 16:30" or "friday 17:00", to test time rules |  |
+| `--called` | a tool the session already called, as upstream.tool (repeatable) |  |
 | `--calls-so-far` | pretend this many calls were already made, to test budgets | `0` |
+| `--host` | the host that opened the session, as name or name/version, to test host.* rules |  |
 | `--json` | print the call and the decision as JSON |  |
+| `--label` | a label the session already carries (repeatable) |  |
 | `--repeats` | pretend the identical call was just made this many times, to test the loop guard | `0` |
 | `--tool` | tool name as the host sees it, prefix included |  |
 
@@ -248,6 +273,49 @@ config checks for it on every call. `agentgate status` prints the path.
 |---|---|---|
 | `--all` | also list calls that are identical |  |
 | `--json` | print the diff as JSON |  |
+
+### `doctor [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print the checks as JSON |  |
+| `--offline` | do not start the upstream servers or reach out to the network |  |
+
+### `init [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--dir` | where agentgate keeps its configs and the manifest (default ~/.agentgate) |  |
+| `--host` | only this host (repeatable): claude-desktop, claude-code, cursor, cursor-project, windsurf, vscode, gemini-cli |  |
+| `--yes` | make the changes instead of showing them |  |
+
+### `lock [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--check` | exit 1 if any tool is new, changed, removed, unpinned or flagged |  |
+| `--json` | print the reports as JSON |  |
+| `--trust` | trust a tool as it is offered now, as upstream.tool; '*' trusts everything (repeatable) |  |
+
+### `mock <session-id> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--http` | serve over Streamable HTTP on this address instead of stdio |  |
+| `--strict` | answer calls that were never recorded with an error instead of the tool's next recorded result |  |
+
+### `policy add <pack> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--with` | a value for one of the pack's parameters, as key=value (repeatable) |  |
+
+### `policy lint [file] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--connect` | ask the servers for their tools instead of using the last recorded catalog |  |
+| `--json` | print the findings as JSON |  |
 
 ### `policy suggest [flags]`
 
@@ -296,6 +364,7 @@ config checks for it on every call. `agentgate status` prints the path.
 
 | Flag | What it does | Default |
 |---|---|---|
+| `--fail-on` | exit 1 when a threshold is crossed, e.g. 'canary>0,denied>=10' |  |
 | `--json` | print as JSON |  |
 | `--markdown` | print as Markdown tables |  |
 | `--session` | summarise one session instead (id or prefix) |  |
@@ -319,4 +388,18 @@ config checks for it on every call. `agentgate status` prints the path.
 |---|---|---|
 | `--addr` | address to listen on | `127.0.0.1:7777` |
 | `--allow-remote-ui` | allow binding to a non-loopback address (the UI has no authentication) |  |
+
+### `uninstall [host...] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--dir` | where agentgate keeps its configs and the manifest (default ~/.agentgate) |  |
+
+### `verify [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--anchor` | a head printed by an earlier verify, as seq:hash, that must still be in the chain |  |
+| `--json` | print the report as JSON |  |
+| `--missing-ok` | succeed when there is no audit database yet, instead of failing |  |
 <!-- END:flags -->

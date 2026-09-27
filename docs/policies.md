@@ -148,11 +148,14 @@ Friday.
 | `equals` | the value is exactly this | <code>args.dryRun: { equals: false }</code> |
 | `not_equals` | the value is anything but this | <code>args.mode: { not_equals: "dry" }</code> |
 | `regex` | the value matches this Go regular expression | <code>args.command: { regex: '\brm\s+-rf' }</code> |
+| `not_regex` | the value does not match this regular expression | <code>args.sql: { not_regex: '(?i)\bwhere\b' }</code> |
 | `prefix` | the value starts with this string | <code>args.path: { prefix: "/etc/" }</code> |
 | `not_prefix` | the value does not start with this string | <code>args.path: { not_prefix: "/srv/app/" }</code> |
 | `in` | the value is one of these | <code>args.env: { in: ["prod", "staging"] }</code> |
 | `gt`, `lt` | the value is a number above / below this; both may be combined | <code>args.amount: { gt: 10, lt: 100 }</code> |
 | `exists` | the path is present (`true`) or absent (`false`) | <code>args.dryRun: { exists: false }</code> |
+| `includes` | one of the values — or one item of a list among them — is exactly this | <code>session.labels: { includes: private-data }</code> |
+| `excludes` | no value, and no item of a list among them, is this; also holds when there is none | <code>session.called: { excludes: shell.test }</code> |
 <!-- END:matchers -->
 
 Two shorthands save a level of nesting:

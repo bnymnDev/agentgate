@@ -145,7 +145,7 @@ func newCanaryListCmd(g *globals) *cobra.Command {
 func newCanaryRmCmd(g *globals) *cobra.Command {
 	var deleteFile bool
 	cmd := &cobra.Command{
-		Use:     "rm <id|label>",
+		Use:     "rm <id-or-label>",
 		Aliases: []string{"remove"},
 		Short:   "Retire a canary",
 		Args:    cobra.ExactArgs(1),
