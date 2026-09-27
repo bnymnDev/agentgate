@@ -26,7 +26,7 @@ rules:
       tool_name:
         regex: '(?i)(send|post|publish|upload|email|mail|message|comment|reply|create|update|push|webhook|request|fetch|http|navigate|browse|share|exec|run|command)'
     action: deny
-    reason: "this session read a tool result with hidden text or instructions aimed at the model; nothing leaves it now"
+    reason: "suspected prompt injection: a tool result this session read carried hidden text or instructions aimed at the model, so nothing leaves the session now"
 
   - id: trifecta
     tool: "*"

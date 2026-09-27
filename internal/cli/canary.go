@@ -75,7 +75,7 @@ func newCanaryNewCmd(g *globals) *cobra.Command {
 				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 					return err
 				}
-				if err := os.WriteFile(path, []byte(c.Decoy()), 0o600); err != nil {
+				if err := os.WriteFile(path, []byte(c.DecoyFor(path)), 0o600); err != nil {
 					return err
 				}
 				c.File = path

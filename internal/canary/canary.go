@@ -64,9 +64,19 @@ func Generate(kind, label string) (Canary, error) {
 }
 
 // Decoy renders the canary as the file an agent would expect to find it in.
-func (c Canary) Decoy() string {
+func (c Canary) Decoy() string { return c.DecoyFor("") }
+
+// DecoyFor renders the canary for a file at path: as dotenv lines when the
+// file is a .env file, and otherwise in the format the real secret usually
+// lives in. A decoy that looks out of place is one an agent might not use.
+func (c Canary) DecoyFor(path string) string {
+	base := strings.ToLower(filepath.Base(path))
+	dotenv := strings.HasPrefix(base, ".env") || strings.HasSuffix(base, ".env")
 	switch c.Kind {
 	case "aws":
+		if dotenv {
+			return fmt.Sprintf("AWS_ACCESS_KEY_ID=%s\nAWS_SECRET_ACCESS_KEY=%s\nAWS_DEFAULT_REGION=us-east-1\n", c.Values[0], c.Values[1])
+		}
 		return fmt.Sprintf("[default]\naws_access_key_id = %s\naws_secret_access_key = %s\nregion = us-east-1\n", c.Values[0], c.Values[1])
 	case "github":
 		return fmt.Sprintf("GITHUB_TOKEN=%s\n", c.Values[0])

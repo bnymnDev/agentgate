@@ -46,15 +46,17 @@ func (p *Proxy) canaryTripped(st *sessionState, b ToolBinding, args json.RawMess
 	if hit.Canary.Label != "" {
 		name = hit.Canary.Label
 	}
-	how := ""
+	how := "in plain text"
 	if hit.Encoding != "plain" {
-		how = ", " + hit.Encoding + "-encoded"
+		how = hit.Encoding + "-encoded"
 	}
 	decision := policy.Decision{
 		Action: policy.ActionDeny,
 		RuleID: policy.RuleCanary,
-		Reason: fmt.Sprintf("canary: this call carries the %s canary %s out%s. It is a fake credential nothing legitimate ever sends anywhere; whatever asked for this is trying to exfiltrate what the agent read",
-			hit.Canary.Kind, name, how),
+		// What was caught, and how it was dressed up, comes first: a
+		// one-line view has room for little more.
+		Reason: fmt.Sprintf("canary: %s leaving %s; it is a fake %s credential that nothing legitimate ever sends anywhere, so whatever asked for this is trying to exfiltrate what the agent read",
+			name, how, hit.Canary.Kind),
 	}
 	p.log.Error("canary token leaving",
 		"session", st.id, "host", st.hostName, "tool", b.Exposed, "canary", name, "encoding", hit.Encoding)
@@ -76,7 +78,7 @@ func (p *Proxy) canaryTripped(st *sessionState, b ToolBinding, args json.RawMess
 		Result: marshalResult(result), IsError: true, DurationMS: time.Since(started).Milliseconds(),
 		CatalogHash: p.catalogHash(),
 	})
-	msg := fmt.Sprintf("exfiltration stopped: %s tried to send the %s canary %s out through %s%s",
+	msg := fmt.Sprintf("exfiltration stopped: %s tried to send the %s canary %s out through %s, %s",
 		hostLabel(st), hit.Canary.Kind, name, b.Exposed, how)
 	if frozen {
 		msg += "\nThe gateway is frozen. Run `agentgate unfreeze` when you have looked."

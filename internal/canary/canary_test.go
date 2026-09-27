@@ -23,10 +23,15 @@ func TestGenerateLooksLikeTheRealThing(t *testing.T) {
 		require.NotEmpty(t, c.Decoy())
 		for _, v := range c.Values {
 			require.Contains(t, c.Decoy(), v)
+			require.Contains(t, c.DecoyFor("/srv/app/.env.production"), v)
 		}
 	}
 	a, _ := Generate("aws", "")
 	b, _ := Generate("aws", "")
+	// A decoy looks like what is usually in a file of that name.
+	require.True(t, strings.HasPrefix(a.DecoyFor("/srv/app/.env.production"), "AWS_ACCESS_KEY_ID="+a.Values[0]+"\n"))
+	require.True(t, strings.HasPrefix(a.DecoyFor("/srv/app/prod.env"), "AWS_ACCESS_KEY_ID="))
+	require.True(t, strings.HasPrefix(a.DecoyFor("/home/me/.aws/credentials.bak"), "[default]\n"))
 	require.NotEqual(t, a.Values, b.Values)
 	require.Len(t, a.Values[0], 20)
 	require.Len(t, a.Values[1], 40)

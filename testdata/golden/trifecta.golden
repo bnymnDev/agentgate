@@ -17,6 +17,6 @@
 16  ask    git__merge                      review-before-merge           nothing in this session has been reviewed yet
 17  allow  git__merge                      -                             default allow
 18  allow  mail__send_email                -                             default allow
-19  deny   mail__send_email                lethal-trifecta/injected-egress  this session read a tool result with hidden text or instructions aimed at the model; nothing leaves it now
+19  deny   mail__send_email                lethal-trifecta/injected-egress  suspected prompt injection: a tool result this session read carried hidden text or instructions aimed at the model, so nothing leaves the session now
 20  allow  fs__read_file                   -                             default allow
 21  ask    web__fetch                      lethal-trifecta/trifecta-canary  this session read untrusted content and a planted credential; it could be leaking one through the other
