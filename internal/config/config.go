@@ -148,6 +148,82 @@ type Upstream struct {
 	// configured and to false for a single upstream.
 	Prefix  *bool    `yaml:"prefix"`
 	Timeout Duration `yaml:"timeout"`
+	// Tools limits what this upstream offers to the tools whose names, as
+	// the server gives them, match one of these globs; a pattern that starts
+	// with ! hides what it matches instead. A tool that is not offered cannot
+	// be called, and its description, which the model reads as
+	// instructions, never reaches the model. Empty offers every tool.
+	Tools []string `yaml:"tools"`
+
+	offer toolFilter
+}
+
+// toolFilter is the compiled form of Upstream.Tools.
+type toolFilter []toolPattern
+
+type toolPattern struct {
+	src  string
+	re   *regexp.Regexp
+	hide bool
+}
+
+func compileToolFilter(patterns []string) (toolFilter, error) {
+	var f toolFilter
+	for _, p := range patterns {
+		glob, hide := strings.CutPrefix(strings.TrimSpace(p), "!")
+		glob = strings.TrimSpace(glob)
+		if glob == "" {
+			return nil, fmt.Errorf("empty pattern %q", p)
+		}
+		re, err := policy.CompileGlob(glob)
+		if err != nil {
+			return nil, fmt.Errorf("pattern %q: %w", p, err)
+		}
+		f = append(f, toolPattern{src: p, re: re, hide: hide})
+	}
+	return f, nil
+}
+
+// Offers reports whether the upstream's tool of this name, as the server
+// names it, is offered to the agent: it matches a pattern, or there are only
+// ! patterns, and it matches no ! pattern.
+func (u *Upstream) Offers(tool string) bool {
+	included, onlyHides := false, true
+	for _, p := range u.offer {
+		switch {
+		case p.hide && p.re.MatchString(tool):
+			return false
+		case !p.hide:
+			onlyHides = false
+			included = included || p.re.MatchString(tool)
+		}
+	}
+	return included || onlyHides
+}
+
+// UnmatchedTools returns the Tools patterns that match none of names, the
+// tools the server offers: most likely, a misspelt tool.
+func (u *Upstream) UnmatchedTools(names []string) []string {
+	var out []string
+	for _, p := range u.offer {
+		matched := false
+		for _, n := range names {
+			if p.re.MatchString(n) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			out = append(out, p.src)
+		}
+	}
+	return out
+}
+
+// Unfiltered is the upstream with every tool offered.
+func (u Upstream) Unfiltered() Upstream {
+	u.Tools, u.offer = nil, nil
+	return u
 }
 
 // Transport reports how the upstream is reached.
@@ -301,6 +377,11 @@ func (c *Config) normalize() error {
 		}
 		if u.Prefix == nil {
 			u.Prefix = boolPtr(len(c.Upstreams) > 1)
+		}
+		if f, err := compileToolFilter(u.Tools); err != nil {
+			errs = append(errs, fmt.Errorf("%s: tools: %w", where, err))
+		} else {
+			u.offer = f
 		}
 	}
 

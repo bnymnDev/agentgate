@@ -200,3 +200,49 @@ upstreams:
 	require.NoError(t, err)
 	require.Empty(t, cfg.Audit.Redactors())
 }
+
+func TestUpstreamToolsFilter(t *testing.T) {
+	cfg, err := Parse([]byte(`
+version: 1
+upstreams:
+  - name: all
+    stdio: [x]
+  - name: some
+    stdio: [x]
+    tools: [get_issue, "list_*"]
+  - name: most
+    stdio: [x]
+    tools: ["!delete_*", "!merge_pull_request"]
+  - name: mixed
+    stdio: [x]
+    tools: ["*_issue*", "!delete_*"]
+`))
+	require.NoError(t, err)
+	offers := func(upstream, tool string) bool { return cfg.Upstream(upstream).Offers(tool) }
+
+	require.True(t, offers("all", "anything"))
+	require.True(t, offers("some", "get_issue"))
+	require.True(t, offers("some", "list_issues"))
+	require.False(t, offers("some", "get_issues"), "globs match whole names")
+	require.False(t, offers("some", "create_issue"))
+	require.True(t, offers("most", "create_issue"), "only hiding patterns offer the rest")
+	require.False(t, offers("most", "delete_repo"))
+	require.False(t, offers("most", "merge_pull_request"))
+	require.True(t, offers("mixed", "get_issue"))
+	require.False(t, offers("mixed", "delete_issue"), "a hiding pattern wins")
+	require.False(t, offers("mixed", "get_repo"))
+
+	require.Equal(t, []string{"list_*"}, cfg.Upstream("some").UnmatchedTools([]string{"get_issue", "create_issue"}))
+	u := cfg.Upstream("some").Unfiltered()
+	require.True(t, u.Offers("create_issue"))
+	require.False(t, offers("some", "create_issue"), "Unfiltered works on a copy")
+
+	_, err = Parse([]byte(`
+version: 1
+upstreams:
+  - name: a
+    stdio: [x]
+    tools: ["!"]
+`))
+	require.ErrorContains(t, err, "upstreams[0] (a): tools: empty pattern")
+}

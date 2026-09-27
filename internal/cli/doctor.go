@@ -202,7 +202,7 @@ func doctorUpstreams(ctx context.Context, g *globals, cfg *config.Config, offlin
 			continue
 		}
 		single := *cfg
-		single.Upstreams = []config.Upstream{*u}
+		single.Upstreams = []config.Upstream{u.Unfiltered()}
 		p, err := proxy.New(proxy.Options{Config: &single, Logger: g.quietLogger(), DownstreamTransport: "doctor", Pinning: proxy.PinningInspect})
 		if err != nil {
 			add(levelFail, "upstream", fmt.Sprintf("%s: %v", u.Name, err), "")
@@ -216,9 +216,24 @@ func doctorUpstreams(ctx context.Context, g *globals, cfg *config.Config, offlin
 			add(levelFail, "upstream", fmt.Sprintf("%s: %v", u.Name, oneLine(err)), "run the command by hand to see why it does not start")
 			continue
 		}
-		tools := len(p.Tools())
+		var names []string
+		offered := 0
+		for _, t := range p.Tools() {
+			names = append(names, t.Name)
+			if u.Offers(t.Name) {
+				offered++
+			}
+		}
 		_ = p.Close()
-		add(levelOK, "upstream", fmt.Sprintf("%s: %d tools over %s", u.Name, tools, u.Transport()), "")
+		if len(u.Tools) == 0 {
+			add(levelOK, "upstream", fmt.Sprintf("%s: %d tools over %s", u.Name, len(names), u.Transport()), "")
+		} else {
+			add(levelOK, "upstream", fmt.Sprintf("%s: %d of its %d tools offered over %s", u.Name, offered, len(names), u.Transport()), "")
+		}
+		for _, pattern := range u.UnmatchedTools(names) {
+			add(levelWarn, "upstream", fmt.Sprintf("%s: tools pattern %q matches none of its tools", u.Name, pattern),
+				"its tools are "+strings.Join(names, ", "))
+		}
 	}
 }
 

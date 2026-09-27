@@ -317,6 +317,41 @@ policy:
 	require.Equal(t, "from b", textOf(t, res))
 }
 
+// TestUpstreamToolsFilter: a tool an upstream does not offer is not listed,
+// cannot be called, and is not pinned or recorded in the catalog.
+func TestUpstreamToolsFilter(t *testing.T) {
+	h := setup(t, `
+version: 1
+upstreams:
+  - name: web
+    stdio: ["unused-in-tests"]
+    tools: [fetch, "read_*"]
+  - name: mail
+    stdio: ["unused-in-tests"]
+    tools: ["!exec", "!write_file", "!query"]
+policy:
+  default: allow
+`)
+	ctx := context.Background()
+	tools, err := h.client.ListTools(ctx, nil)
+	require.NoError(t, err)
+	names := toolNames(tools)
+	require.Contains(t, names, "web__fetch")
+	require.Contains(t, names, "web__read_file")
+	require.NotContains(t, names, "web__echo")
+	require.NotContains(t, names, "web__exec")
+	require.Contains(t, names, "mail__send_message")
+	require.Contains(t, names, "mail__echo")
+	require.NotContains(t, names, "mail__exec")
+	require.NotContains(t, names, "mail__write_file")
+
+	_, err = h.client.CallTool(ctx, &mcp.CallToolParams{Name: "web__exec", Arguments: map[string]any{"command": "id"}})
+	require.Error(t, err, "a hidden tool is unknown to the host")
+	for _, b := range h.proxy.Tools() {
+		require.NotEqual(t, "web__exec", b.Exposed)
+	}
+}
+
 // TestTimeoutBecomesAToolError: agentgate's own deadline must not look like a
 // dead connection to the host.
 func TestTimeoutBecomesAToolError(t *testing.T) {

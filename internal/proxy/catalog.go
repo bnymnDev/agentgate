@@ -181,6 +181,9 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 					errs = append(errs, fmt.Errorf("listing tools of %q: %w", u.name(), err))
 					break
 				}
+				if !u.cfg.Offers(tool.Name) {
+					continue // the model never sees it, so neither does anything else
+				}
 				exposed := cfg.Prefixed(u.cfg, tool.Name)
 				if other, clash := tools[exposed]; clash {
 					errs = append(errs, fmt.Errorf("tool name clash: %q is offered by both %q and %q; give one of them prefix: true",

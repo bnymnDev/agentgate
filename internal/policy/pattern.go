@@ -50,6 +50,13 @@ func compilePattern(src string) (*pattern, error) {
 	return &pattern{src: src, re: re}, nil
 }
 
+// CompileGlob compiles a glob in the syntax tool patterns use — * and ? are
+// wildcards, every other character is literal — into an expression that
+// matches whole names only.
+func CompileGlob(glob string) (*regexp.Regexp, error) {
+	return regexp.Compile("^(?:" + globToRegex(glob) + ")$")
+}
+
 // globToRegex converts a glob to an unanchored regex fragment. Every character
 // except * and ? is taken literally, so a dot in "fs.read" only matches a dot.
 func globToRegex(glob string) string {

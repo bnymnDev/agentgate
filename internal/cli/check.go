@@ -112,6 +112,9 @@ Nothing is sent upstream and nothing is recorded; this only runs the evaluator.`
 				fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "tool", tool)
 				if upstream != "" {
 					fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s (as %s)\n", "upstream", upstream, name)
+					if u := cfg.Upstream(upstream); u != nil && !u.Offers(name) {
+						fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "offered", "no — hidden by the upstream's tools: list, so the host never sees it")
+					}
 				}
 				fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "decision", strings.ToUpper(string(decision.Action)))
 				fmt.Fprintf(cmd.OutOrStdout(), "%-9s %s\n", "reason", decision.Reason)
