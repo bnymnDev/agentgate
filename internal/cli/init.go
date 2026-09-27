@@ -76,8 +76,11 @@ puts everything back. Without --yes, init only shows what it would do.`,
 				return nil
 			}
 			if !yes {
-				fmt.Fprintf(out, "\nagentgate init --yes would, for %s:\n", hostList(picked))
-				fmt.Fprintf(out, "  - write %s with its servers as upstreams, in shadow mode,\n", filepath.Join(home, "<host>.yaml"))
+				fmt.Fprintln(out, "\nagentgate init --yes would:")
+				for _, c := range picked {
+					fmt.Fprintf(out, "  - write %s for %s, with its servers as upstreams, in shadow mode,\n",
+						filepath.Join(home, c.Host.Name+".yaml"), c.Host.Title)
+				}
 				fmt.Fprintln(out, "  - replace those servers in the host's config with one entry that runs agentgate,")
 				fmt.Fprintf(out, "  - keep the originals in %s so agentgate uninstall can put them back.\n", filepath.Join(home, "installed.json"))
 				return nil
@@ -201,14 +204,6 @@ func printCandidates(out io.Writer, cands []install.Candidate) {
 		t.row(c.Host.Name, c.Status, orDash(truncate(strings.Join(names, ", "), 40)), c.Host.Path)
 	}
 	t.flush()
-}
-
-func hostList(cands []install.Candidate) string {
-	names := make([]string, 0, len(cands))
-	for _, c := range cands {
-		names = append(names, c.Host.Title)
-	}
-	return strings.Join(names, ", ")
 }
 
 func hostNames() []string {
