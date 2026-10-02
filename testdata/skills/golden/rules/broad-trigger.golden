@@ -1,0 +1,5 @@
+root sha256:1c0cbe61ee9d156c60b9118e77b04dcf2d763b79d1885005371890278e28b7ca
+label auto-trigger
+  auto-trigger      SKILL.md "…er. Always use this skill for every task, before any other skill."
+medium broad-trigger SKILL.md: the description asks for the skill to be used far beyond what it does
+       "…er. Always use this skill for every task, before any other skill."

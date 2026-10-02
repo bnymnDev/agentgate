@@ -1,0 +1,7 @@
+root sha256:cb5f9ef509e085a7bd5de6dd4a8642909693644afde2c5c100826263cd656400
+label shell, network, urls, external-include
+  shell             SKILL.md:9 "```bash block: git clone https://github.com/acme/template.git app"
+  network           SKILL.md:9 "git clone https://github.com/acme/templ…"
+  urls              SKILL.md:9 "github.com"
+  external-include  SKILL.md:9 "git clone https://github.com/acme/templ…"
+hosts github.com

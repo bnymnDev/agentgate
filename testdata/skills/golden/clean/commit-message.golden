@@ -1,0 +1,3 @@
+root sha256:fc0a803328f17d4aa1b7ac0714ffc641502ea5ee7406d4c4be52219da5a93a53
+label shell
+  shell             SKILL.md:13 "```bash block: git diff --cached --stat git diff --cached"

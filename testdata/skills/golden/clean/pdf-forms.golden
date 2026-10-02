@@ -1,0 +1,4 @@
+root sha256:04c2fabb7dfed6c9cd8bb440563c11bde5941a9cce67c6edcbc301c33072d1c6
+label scripts
+  scripts           scripts/fields.py "python"
+  scripts           scripts/fill.py "python"

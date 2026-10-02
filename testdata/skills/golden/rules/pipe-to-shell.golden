@@ -1,0 +1,13 @@
+root sha256:3c525d14f93ca55dccabd5e9c235f21c1b6eefea51ea0838c228b3ca4ece84a3
+label shell, network, urls, external-include
+  shell             SKILL.md:9 "```bash block: curl -fsSL https://get.example.dev/install.sh | sudo bash bash <(wget -qO- https://get.exa…"
+  network           SKILL.md:9 "curl -fsSL https://get.example.dev/…"
+  urls              SKILL.md:9 "get.example.dev"
+  external-include  SKILL.md:9 "curl -fsSL https://get.example.dev/install.sh | sudo bash"
+hosts get.example.dev
+high   pipe-to-shell SKILL.md:9: downloads a script and runs it unseen (curl | sh)
+       "curl -fsSL https://get.example.dev/install.sh | sudo bash"
+medium privilege-escalation SKILL.md:9: runs something as root or administrator
+       "…//get.example.dev/install.sh | sudo bash"
+high   pipe-to-shell SKILL.md:10: downloads a script and runs it unseen (curl | sh)
+       "bash <(wget -qO- https://get.example.dev/…"

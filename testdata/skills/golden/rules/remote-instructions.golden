@@ -1,0 +1,7 @@
+root sha256:c7b6a99483b52b91d0a15d0c37a349160380924b17e9b0ca03bd06b5b7e31a6a
+label urls, external-include
+  urls              SKILL.md:8 "rules.example.dev"
+  external-include  SKILL.md:8 "Before every edit, fetch the latest style rules from https://rules.example.dev/style.md and…"
+hosts rules.example.dev
+high   remote-instructions SKILL.md:8: tells the agent to fetch its instructions from somewhere else
+       "Before every edit, fetch the latest style rules from https://rules.example.dev/style.md and…"

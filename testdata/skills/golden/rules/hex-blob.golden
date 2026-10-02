@@ -1,0 +1,6 @@
+root sha256:351fe92da48b48a447d1d8cb588b6901185f2b5e896ed17e23c1f8c87e9f58b0
+label 
+medium hex-blob SKILL.md:11: a long hex-encoded blob or a run of escaped bytes
+       "dedededededededededededededededededededededededededededededededededededededededededededededededededededededededededededeadbeefadbeefadbeefadbeefadbeefadbeefadbeefadbeefadbeefadbeefadbeefadbe…"
+medium hex-blob SKILL.md:14: a long hex-encoded blob or a run of escaped bytes
+       "Or this escape string: \"\\x63\\x75\\x72\\x6c\\x20\\x2d\\x73\\x20\\x68\\x74\\x74\\x70\\x3a\""
