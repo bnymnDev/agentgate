@@ -24,6 +24,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/packs"
 	"github.com/bnymnDev/agentgate/internal/policy"
+	"github.com/bnymnDev/agentgate/internal/skills"
 )
 
 func main() {
@@ -37,9 +38,11 @@ func main() {
 		"matchers":   matcherTable(),
 		"redactions": redactionList(),
 		"packs":      packTable(),
+		"skillrules": skillRuleTable(),
+		"skillcaps":  skillCapabilityTable(),
 	}
 	changed := 0
-	for _, file := range []string{"README.md", "docs/config.md", "docs/policies.md", "docs/replay.md", "docs/guardrails.md", "docs/integrations.md"} {
+	for _, file := range []string{"README.md", "docs/config.md", "docs/policies.md", "docs/replay.md", "docs/guardrails.md", "docs/integrations.md", "docs/skills.md"} {
 		n, err := rewrite(file, blocks)
 		if err != nil {
 			log.Fatal(err)
@@ -208,4 +211,28 @@ func redactionList() string {
 	}
 	b.WriteString("```\n")
 	return b.String()
+}
+
+// skillRuleTable lists every rule agentgate skills runs.
+func skillRuleTable() string {
+	var b strings.Builder
+	b.WriteString("| Rule | Severity | What it catches |\n|---|---|---|\n")
+	for _, r := range skills.Rules() {
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", r.ID, r.Severity, cell(r.Why))
+	}
+	return b.String()
+}
+
+// skillCapabilityTable lists the capabilities a skill's label can show.
+func skillCapabilityTable() string {
+	var b strings.Builder
+	b.WriteString("| Capability | Means | Derived from |\n|---|---|---|\n")
+	for _, c := range skills.Capabilities() {
+		fmt.Fprintf(&b, "| `%s` | %s | %s |\n", c.ID, c.Title, cell(c.Why))
+	}
+	return b.String()
+}
+
+func cell(s string) string {
+	return strings.NewReplacer("|", "\\|", "<", "&lt;", ">", "&gt;", "\n", " ").Replace(s)
 }
