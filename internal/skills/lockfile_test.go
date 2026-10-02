@@ -361,3 +361,19 @@ func BenchmarkCheck200(b *testing.B) {
 		l.Check(skills)
 	}
 }
+
+// The project the GitHub Action is tested against in CI matches its
+// lockfile. When a rule changes what it sees there, `make golden` approves
+// it again.
+func TestCommittedProjectMatchesItsLockfile(t *testing.T) {
+	dir := filepath.Join(fixtures, "project")
+	l, err := LoadLockfile(filepath.Join(dir, DefaultLockfile))
+	require.NoError(t, err)
+	skills, err := Discover(Options{Dir: dir, Home: t.TempDir()})
+	require.NoError(t, err)
+	rs := l.Check(skills)
+	require.Len(t, rs, 2)
+	for _, r := range rs {
+		assert.Equal(t, StatusLocked, r.Status, "%s; run make golden", r.Key)
+	}
+}

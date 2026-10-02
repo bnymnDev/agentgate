@@ -21,6 +21,15 @@ inputs:
   tests:
     description: Policy tests to run against the config — auto runs the test file next to it if there is one, off runs none, anything else names a test file.
     default: auto
+  skills:
+    description: A project directory whose Agent Skills to check against its skills.lock — fails the step on any change nobody approved. Empty checks none.
+    default: ""
+  skills-lockfile:
+    description: The skills lockfile, if it is not skills.lock in the skills directory.
+    default: ""
+  skills-fail:
+    description: Whether unapproved skill changes fail the step, true or false. Either way the report goes to the job summary.
+    default: "true"
 
 outputs:
   path:
@@ -29,6 +38,9 @@ outputs:
   version:
     description: The version installed.
     value: ${{ steps.install.outputs.version }}
+  skills-report:
+    description: A Markdown file with the skills report, for a pull request comment. Set when skills is.
+    value: ${{ steps.skills.outputs.report }}
 
 runs:
   using: composite
@@ -121,3 +133,38 @@ runs:
           auto) "$AGENTGATE" test --config "$CONFIG" --missing-ok ;;
           *) "$AGENTGATE" test --config "$CONFIG" "$TESTS" ;;
         esac
+
+    - if: inputs.skills != ''
+      id: skills
+      shell: bash
+      env:
+        SKILLS_DIR: ${{ inputs.skills }}
+        SKILLS_LOCKFILE: ${{ inputs.skills-lockfile }}
+        SKILLS_FAIL: ${{ inputs.skills-fail }}
+        AGENTGATE: ${{ steps.install.outputs.path }}
+      run: |
+        set -uo pipefail
+        # skills came after 0.4.0; an older release has nothing to check with.
+        installed=$("$AGENTGATE" --version | awk '{print $3}')
+        case "$installed" in
+          0.[0-4].*|v0.[0-4].*)
+            echo "::notice::agentgate $installed has no skills command; it comes with the release after 0.4.0"
+            exit 0 ;;
+        esac
+        args=(skills verify --dir "$SKILLS_DIR")
+        if [ -n "$SKILLS_LOCKFILE" ]; then args+=(--lockfile "$SKILLS_LOCKFILE"); fi
+        report="$RUNNER_TEMP/agentgate-skills.md"
+        "$AGENTGATE" "${args[@]}" --markdown > "$report"
+        status=$?
+        cat "$report" >> "$GITHUB_STEP_SUMMARY"
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+        if [ "$status" -ne 0 ]; then
+          # The same report, readable in the log.
+          "$AGENTGATE" "${args[@]}" --color never || true
+          if [ "$SKILLS_FAIL" = "false" ]; then
+            echo "::warning::skills changed without approval; see the job summary"
+            exit 0
+          fi
+          echo "::error::skills changed without approval; review with agentgate skills diff, then agentgate skills approve"
+          exit 1
+        fi
