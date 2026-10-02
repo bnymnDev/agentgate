@@ -37,6 +37,9 @@ type Options struct {
 	Paths []string
 	// User also looks in the home directory, plugins included.
 	User bool
+	// Exclude is a file never read as part of a skill: the lockfile, when
+	// a skill directory holds it.
+	Exclude string
 	// PathsOnly looks in Paths alone, not in the project's skill
 	// directories.
 	PathsOnly bool
@@ -147,7 +150,7 @@ func Discover(o Options) ([]*Skill, error) {
 			return nil
 		}
 		seen[key] = true
-		s, err := Load(path, key)
+		s, err := load(path, key, o.Exclude)
 		if err != nil {
 			return err
 		}
@@ -187,14 +190,15 @@ func Discover(o Options) ([]*Skill, error) {
 }
 
 // isSkillDir reports whether path is a directory, or a link to one, with a
-// SKILL.md in it.
+// SKILL.md in it — of any kind: a SKILL.md that is a symlink is what the
+// agent loads, and has to be pinned like any other.
 func isSkillDir(path string) bool {
 	fi, err := os.Stat(path)
 	if err != nil || !fi.IsDir() {
 		return false
 	}
-	m, err := os.Lstat(filepath.Join(path, ManifestName))
-	return err == nil && m.Mode().IsRegular()
+	_, err = os.Lstat(filepath.Join(path, ManifestName))
+	return err == nil
 }
 
 // keyFor names a skill directory the same way on every machine: relative to
@@ -213,7 +217,10 @@ func keyFor(path, dir, home string) string {
 
 func under(path, base string) (string, bool) {
 	rel, err := filepath.Rel(base, path)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
+	if err == nil && rel == "." {
+		return ".", true
+	}
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return "", false
 	}
 	return filepath.ToSlash(rel), true

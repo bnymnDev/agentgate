@@ -23,6 +23,7 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -49,6 +50,9 @@ const (
 	KindFile    = "file"
 	KindSymlink = "symlink"
 	KindSpecial = "special"
+	// KindRepository is a git repository at the root of a skill: its
+	// presence is pinned, its content is not.
+	KindRepository = "repository"
 )
 
 // File is one file of a skill, as it is on disk.
@@ -66,6 +70,8 @@ type File struct {
 	Binary bool `json:"binary,omitempty"`
 	// Truncated is set when only the first part of the file was scanned.
 	Truncated bool `json:"truncated,omitempty"`
+	// Malformed is set for a text file with NUL bytes or invalid UTF-8.
+	Malformed bool `json:"malformed,omitempty"`
 
 	// text is the scanned content of a text file.
 	text string
@@ -116,9 +122,14 @@ func (s *Skill) file(path string) *File {
 }
 
 // Load reads a skill directory: every file is hashed, the text ones are kept
-// for the scan. Symlinks inside the skill are recorded, never followed;
-// named pipes and devices are recorded, never opened.
-func Load(dir, key string) (*Skill, error) {
+// for the scan. A symlink inside the skill is pinned by where it points and,
+// when that is a file, by what the file says; it is never walked into. Named
+// pipes and devices are recorded, never opened.
+func Load(dir, key string) (*Skill, error) { return load(dir, key, "") }
+
+// load is Load, leaving out one file: the lockfile, when it sits inside a
+// skill (a repository that is itself one skill, checked with --path .).
+func load(dir, key, exclude string) (*Skill, error) {
 	s := &Skill{Key: key, Dir: dir, Name: filepath.Base(dir)}
 	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		target, _ := os.Readlink(dir)
@@ -128,6 +139,11 @@ func Load(dir, key string) (*Skill, error) {
 	if err != nil {
 		return nil, err
 	}
+	if exclude != "" {
+		if r, err := filepath.EvalSymlinks(exclude); err == nil {
+			exclude = r
+		}
+	}
 	err = filepath.WalkDir(real, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -135,12 +151,16 @@ func Load(dir, key string) (*Skill, error) {
 		rel, _ := filepath.Rel(real, path)
 		rel = filepath.ToSlash(rel)
 		if d.IsDir() {
-			if path != real && skipDir(path, d.Name()) {
+			if rel == ".git" && isRepository(path) {
+				// A skill that is a git checkout: its objects change on
+				// every fetch. Its presence is pinned, its content is not,
+				// and the git-repository rule says so.
+				s.Files = append(s.Files, File{Path: rel, Kind: KindRepository, Hash: hashBytes([]byte("repository"))})
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if skipFile(d.Name()) {
+		if path == exclude {
 			return nil
 		}
 		f, err := readFile(path, rel, d)
@@ -162,19 +182,19 @@ func Load(dir, key string) (*Skill, error) {
 	return s, nil
 }
 
-// skipDir leaves out a git checkout's own repository: its objects change on
-// every fetch, and nothing in it is part of what the agent loads.
-func skipDir(path, name string) bool {
-	if name != ".git" {
+// isRepository tells a git repository from a directory that merely calls
+// itself .git: it has a HEAD, objects and refs.
+func isRepository(path string) bool {
+	head, err := os.Stat(filepath.Join(path, "HEAD"))
+	if err != nil || !head.Mode().IsRegular() {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(path, "HEAD"))
-	return err == nil
-}
-
-// skipFile leaves out the litter desktop file managers leave behind.
-func skipFile(name string) bool {
-	return name == ".DS_Store" || name == "Thumbs.db"
+	for _, d := range []string{"objects", "refs"} {
+		if fi, err := os.Stat(filepath.Join(path, d)); err != nil || !fi.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 func readFile(path, rel string, d fs.DirEntry) (File, error) {
@@ -191,7 +211,16 @@ func readFile(path, rel string, d fs.DirEntry) (File, error) {
 		}
 		f.Kind = KindSymlink
 		f.Target = filepath.ToSlash(target)
-		f.Hash = hashBytes([]byte("symlink\x00" + f.Target))
+		link := "symlink\x00" + f.Target
+		// What the link points at is what the agent reads: when it is a
+		// file, its content is pinned and scanned too.
+		if st, err := os.Stat(path); err == nil && st.Mode().IsRegular() {
+			if err := f.readContent(path, st.Size()); err != nil {
+				return f, err
+			}
+			link += "\x00" + f.Hash
+		}
+		f.Hash = hashBytes([]byte(link))
 		return f, nil
 	case !info.Mode().IsRegular():
 		// A named pipe would block a read forever, and a device has no
@@ -200,10 +229,15 @@ func readFile(path, rel string, d fs.DirEntry) (File, error) {
 		f.Hash = hashBytes([]byte("special\x00" + info.Mode().Type().String()))
 		return f, nil
 	}
-	f.Size = info.Size()
+	return f, f.readContent(path, info.Size())
+}
+
+// readContent hashes a file and keeps what the scan reads.
+func (f *File) readContent(path string, size int64) error {
+	f.Size = size
 	fh, err := os.Open(path)
 	if err != nil {
-		return f, err
+		return err
 	}
 	defer func() { _ = fh.Close() }()
 	if f.Size > maxReadBytes {
@@ -212,28 +246,31 @@ func readFile(path, rel string, d fs.DirEntry) (File, error) {
 		n, _ := io.ReadFull(fh, head)
 		h.Write(head[:n])
 		if _, err := io.Copy(h, fh); err != nil {
-			return f, err
+			return err
 		}
 		f.Hash = "sha256:" + hex.EncodeToString(h.Sum(nil))
 		f.Truncated = true
 		f.classify(head[:n], true)
-		return f, nil
+		return nil
 	}
 	raw, err := io.ReadAll(fh)
 	if err != nil {
-		return f, err
+		return err
 	}
 	f.Size = int64(len(raw))
 	f.classify(raw, false)
-	if f.Binary {
+	if f.Binary || f.Malformed {
 		f.Hash = hashBytes(raw)
 	} else {
 		f.Hash = hashBytes(bytes.ReplaceAll(raw, []byte("\r\n"), []byte("\n")))
 	}
-	return f, nil
+	return nil
 }
 
-// classify decides whether content is text and keeps what the scan reads.
+// classify decides whether content is text and keeps what the scan reads. A
+// file that should be text — Markdown, a script, a config — but has a NUL
+// byte or invalid UTF-8 in it is still read, with the bad bytes replaced,
+// and marked Malformed: one stray byte must not switch the scan off.
 func (f *File) classify(raw []byte, partial bool) {
 	scan := raw
 	if len(scan) > maxScanBytes {
@@ -247,12 +284,54 @@ func (f *File) classify(raw []byte, partial bool) {
 			probe = probe[:len(probe)-1]
 		}
 	}
-	if bytes.IndexByte(scan, 0) >= 0 || !utf8.Valid(probe) {
-		f.Binary = true
-		f.head = append([]byte(nil), scan[:min(len(scan), 512)]...)
+	if bytes.IndexByte(scan, 0) < 0 && utf8.Valid(probe) {
+		f.text = string(probe)
 		return
 	}
-	f.text = string(probe)
+	if textLike(f.Path, scan) {
+		f.Malformed = true
+		f.text = strings.ToValidUTF8(strings.ReplaceAll(string(scan), "\x00", ""), "\uFFFD")
+		return
+	}
+	f.Binary = true
+	f.head = append([]byte(nil), scan[:min(len(scan), 512)]...)
+}
+
+// textExts are extensions of files that are text whatever bytes they hold.
+var textExts = map[string]bool{".txt": true, ".json": true, ".yaml": true, ".yml": true, ".toml": true,
+	".ini": true, ".cfg": true, ".conf": true, ".csv": true, ".xml": true, ".html": true, ".htm": true,
+	".css": true, ".env": true, ".tmpl": true, ".j2": true, ".rst": true, ".adoc": true}
+
+// textLike reports whether a file is meant to be text: by its name, by a #!
+// line, or by being nearly all printable and no known binary format.
+func textLike(p string, b []byte) bool {
+	ext := strings.ToLower(path.Ext(p))
+	if isMarkdown(p) || textExts[ext] || scriptLangs[ext] != "" || bytes.HasPrefix(b, []byte("#!")) {
+		return true
+	}
+	if knownBinary(b) {
+		return false
+	}
+	odd := 0
+	for _, c := range b {
+		if c < 0x09 || c > 0x0d && c < 0x20 || c == 0x7f {
+			odd++
+		}
+	}
+	return len(b) > 0 && odd*20 < len(b)
+}
+
+// knownBinary recognises the formats a skill legitimately ships as binary,
+// and the ones the binary rules look for.
+func knownBinary(h []byte) bool {
+	for _, magic := range []string{"\x7fELF", "MZ", "\xfe\xed\xfa", "\xce\xfa\xed\xfe", "\xcf\xfa\xed\xfe", "\xca\xfe\xba\xbe",
+		"\x00asm", "PK\x03\x04", "\x1f\x8b", "7z\xbc\xaf", "Rar!", "\xfd7zXZ", "BZh", "\x89PNG", "\xff\xd8\xff", "GIF8",
+		"RIFF", "%PDF", "wOFF", "wOF2", "OTTO", "\x00\x01\x00\x00", "ttcf", "\x00\x00\x01\x00"} {
+		if bytes.HasPrefix(h, []byte(magic)) {
+			return true
+		}
+	}
+	return len(h) > 12 && string(h[4:8]) == "ftyp"
 }
 
 func hashBytes(b []byte) string {

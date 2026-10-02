@@ -308,6 +308,8 @@ func entryHash(f File) string {
 		return "-> " + f.Target
 	case KindSpecial:
 		return "special"
+	case KindRepository:
+		return "repository (not pinned)"
 	}
 	return f.Hash
 }

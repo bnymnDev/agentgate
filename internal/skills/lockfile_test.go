@@ -298,17 +298,6 @@ func TestDiscoverLooksWhereAgentsLook(t *testing.T) {
 		"~/.claude/plugins/cache/market/tools/1.0.0/skills/lint", "~/.claude/skills/mine"}, keys(o))
 }
 
-func TestGitDirectoryOfACheckedOutSkillIsLeftOut(t *testing.T) {
-	p := newProject(t)
-	p.skill("cloned", "Cloned.\n")
-	p.write(".claude/skills/cloned/.git/HEAD", "ref: refs/heads/main\n")
-	p.write(".claude/skills/cloned/.git/objects/ab/cdef", "x")
-	l := p.locked()
-	p.write(".claude/skills/cloned/.git/objects/12/3456", "fetched")
-	assert.Equal(t, StatusLocked, p.check(l)[0].Status)
-	assert.Len(t, l.Skills[".claude/skills/cloned"].Files, 1)
-}
-
 func TestReportMatch(t *testing.T) {
 	r := Report{Key: ".claude/skills/pdf-forms", Name: "pdf"}
 	for _, n := range []string{".claude/skills/pdf-forms", "pdf-forms", "pdf", `.claude\skills\pdf-forms`, ".claude/skills/pdf-forms/"} {

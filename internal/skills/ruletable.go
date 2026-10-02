@@ -215,6 +215,16 @@ var rules = []Rule{
 	{ID: "opaque-file", Severity: Medium, Title: "a binary file nobody can review by reading it",
 		Why:   "An archive - including .docx and .xlsx, which are ZIP files - or a binary of no recognised kind. What is inside is not scanned. Images, PDFs and fonts are let be.",
 		skill: fileRules(opaqueKind)},
+	{ID: "malformed-text", Severity: High, Title: "a text file with NUL bytes or invalid UTF-8",
+		Why: "One stray byte can make a scanner give up on a file as binary while the model reads it anyway. agentgate reads the file with the bad bytes replaced, runs every rule over it, and flags it: a SKILL.md or a script has no reason to be malformed.",
+		skill: fileRules(func(f File) (string, bool) {
+			return "a text file with NUL bytes or invalid UTF-8; it was scanned with the bad bytes replaced", f.Malformed
+		})},
+	{ID: "git-repository", Severity: Medium, Title: "a git repository inside the skill, which is not pinned",
+		Why: "A skill that is a git checkout has a .git directory whose objects change on every fetch, so its content is left out of the root - only its presence is pinned. Code the skill runs from inside .git is therefore unpinned; this finding is the reminder.",
+		skill: fileRules(func(f File) (string, bool) {
+			return "the skill is a git checkout; .git is left out of the lockfile, so nothing in it is pinned", f.Kind == KindRepository
+		})},
 	{ID: "oversized-file", Severity: Medium, Title: "a file larger than the scan reads",
 		Why: "Only the first MiB of a file is scanned, and a payload can sit behind that. Every byte is still hashed, so a change anywhere in the file is caught.",
 		skill: fileRules(func(f File) (string, bool) {
