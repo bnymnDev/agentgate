@@ -37,6 +37,9 @@ type Options struct {
 	Paths []string
 	// User also looks in the home directory, plugins included.
 	User bool
+	// PathsOnly looks in Paths alone, not in the project's skill
+	// directories.
+	PathsOnly bool
 	// Home overrides the home directory, for tests.
 	Home string
 }
@@ -63,8 +66,10 @@ func (o Options) Roots() ([]Root, error) {
 		return nil, err
 	}
 	var out []Root
-	for _, r := range ProjectRoots {
-		out = append(out, Root{filepath.Join(dir, filepath.FromSlash(r)), "project"})
+	if !o.PathsOnly {
+		for _, r := range ProjectRoots {
+			out = append(out, Root{filepath.Join(dir, filepath.FromSlash(r)), "project"})
+		}
 	}
 	for _, p := range o.Paths {
 		p = expandHome(p, o.home())
@@ -137,7 +142,7 @@ func Discover(o Options) ([]*Skill, error) {
 	seen := map[string]bool{}
 	var out []*Skill
 	add := func(path string) error {
-		key := keyFor(path, dir, o.home(), o.User)
+		key := keyFor(path, dir, o.home())
 		if seen[key] {
 			return nil
 		}
@@ -194,7 +199,7 @@ func isSkillDir(path string) bool {
 
 // keyFor names a skill directory the same way on every machine: relative to
 // the project, or under ~ for one in the home directory.
-func keyFor(path, dir, home string, user bool) string {
+func keyFor(path, dir, home string) string {
 	if rel, ok := under(path, dir); ok {
 		return rel
 	}
@@ -203,7 +208,6 @@ func keyFor(path, dir, home string, user bool) string {
 			return "~/" + rel
 		}
 	}
-	_ = user
 	return filepath.ToSlash(path)
 }
 

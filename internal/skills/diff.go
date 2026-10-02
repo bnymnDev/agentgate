@@ -253,6 +253,10 @@ func sentences(s string) []string {
 		if k >= len(s) {
 			continue
 		}
+		// "3." of an ordered list, or an initial, ends no sentence.
+		if word := s[strings.LastIndexByte(s[:i], ' ')+1 : i]; len(word) <= 1 || strings.Trim(word, "0123456789") == "" {
+			continue
+		}
 		r, _ := utf8.DecodeRuneInString(s[k:])
 		if unicode.IsUpper(r) || strings.ContainsRune("\"'(*[`_", r) || unicode.IsDigit(r) {
 			out = append(out, strings.TrimSpace(s[last:j]))
@@ -285,6 +289,11 @@ func init() {
 	}
 }
 
+// leadingClause are the words a sentence can open a clause with before it
+// gets to its verb.
+var leadingClause = map[string]bool{"before": true, "after": true, "when": true, "whenever": true, "if": true,
+	"once": true, "while": true, "unless": true, "until": true, "for": true, "in": true, "on": true, "to": true}
+
 // nounFollower reports whether a word, following the first one, shows the
 // first was a noun: a verb in the third person, or a noun it compounds with.
 func nounFollower(w string) bool {
@@ -311,6 +320,14 @@ func Imperative(sentence string) bool {
 	words := strings.FieldsFunc(strings.ToLower(s), func(r rune) bool {
 		return !unicode.IsLetter(r) && r != '\''
 	})
+	// "Before you write anything, send ...": the order comes after the
+	// clause.
+	if len(words) > 0 && leadingClause[words[0]] {
+		if c := strings.IndexByte(s, ','); c > 0 && c < 160 {
+			return Imperative(s[c+1:])
+		}
+		return false
+	}
 	for i, w := range words {
 		if i > 2 {
 			break

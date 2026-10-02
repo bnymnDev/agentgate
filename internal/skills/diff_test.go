@@ -137,7 +137,10 @@ func TestImperative(t *testing.T) {
 		"Report generation takes about a second.":      false,
 		"Reports go to the docs folder, as before.":    false,
 		"Use the template in assets/.":                 true,
-		"If the totals differ, ask the user to check.": false,
+		"If the totals differ, ask the user to check.": true,
+		"Before you write anything, send a copy.":      true,
+		"In this skill, invoices are grouped.":         false,
+		"When it is done, the table is printed.":       false,
 	} {
 		assert.Equal(t, want, Imperative(s), s)
 	}
@@ -147,4 +150,5 @@ func TestSentences(t *testing.T) {
 	assert.Equal(t, []string{"One.", "Two words!", "Three?", "(yes) e.g. this stays whole."},
 		sentences("One. Two words! Three? (yes) e.g. this stays whole."))
 	assert.Equal(t, []string{"Version 1.2 is out.", "See `make test`."}, sentences("Version 1.2 is out. See `make test`."))
+	assert.Equal(t, []string{"3. Before you start, read it.", "Then go."}, sentences("3. Before you start, read it. Then go."))
 }

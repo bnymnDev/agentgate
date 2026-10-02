@@ -63,6 +63,7 @@ untouched.`,
 		newInitCmd(),
 		newUninstallCmd(),
 		newDoctorCmd(g),
+		newSkillsCmd(),
 	)
 	return root
 }
