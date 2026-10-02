@@ -69,7 +69,9 @@ func rewrite(path string, blocks map[string]string) (int, error) {
 		if !re.MatchString(body) {
 			continue
 		}
-		body = re.ReplaceAllString(body, "${1}"+strings.TrimRight(content, "\n")+"\n${2}")
+		// The content goes in literally: a $ in it is text, not a reference
+		// to a submatch.
+		body = re.ReplaceAllString(body, "${1}"+strings.ReplaceAll(strings.TrimRight(content, "\n"), "$", "$$")+"\n${2}")
 		count++
 	}
 	if body == string(raw) {

@@ -462,10 +462,10 @@ config checks for it on every call. `agentgate status` prints the path.
 | Flag | What it does | Default |
 |---|---|---|
 | `--all` | approve every skill that is not as it was approved |  |
-| `--by` | who is approving, for the lockfile (default ) |  |
+| `--by` | who is approving, for the lockfile (default $USER) |  |
 | `--color` | colour the output: auto, always or never | `auto` |
 | `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
-| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--lockfile` | the lockfile (default: skills.lock in --dir) |  |
 | `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
 | `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
 
@@ -475,7 +475,7 @@ config checks for it on every call. `agentgate status` prints the path.
 |---|---|---|
 | `--color` | colour the output: auto, always or never | `auto` |
 | `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
-| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--lockfile` | the lockfile (default: skills.lock in --dir) |  |
 | `--markdown` | print the diff as Markdown |  |
 | `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
 | `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
@@ -487,7 +487,7 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--color` | colour the output: auto, always or never | `auto` |
 | `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
 | `--json` | print the labels as JSON |  |
-| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--lockfile` | the lockfile (default: skills.lock in --dir) |  |
 | `--markdown` | print a badge and a table per skill, as Markdown |  |
 | `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
 | `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
@@ -496,11 +496,11 @@ config checks for it on every call. `agentgate status` prints the path.
 
 | Flag | What it does | Default |
 |---|---|---|
-| `--by` | who is approving, for the lockfile (default ) |  |
+| `--by` | who is approving, for the lockfile (default $USER) |  |
 | `--color` | colour the output: auto, always or never | `auto` |
 | `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
 | `--json` | print the skills pinned as JSON |  |
-| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--lockfile` | the lockfile (default: skills.lock in --dir) |  |
 | `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
 | `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
 
@@ -519,8 +519,9 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--color` | colour the output: auto, always or never | `auto` |
 | `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
 | `--json` | print the reports as JSON |  |
-| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--lockfile` | the lockfile (default: skills.lock in --dir) |  |
 | `--markdown` | print the report as Markdown, for a pull request or a job summary |  |
+| `--missing-ok` | without a lockfile, check the skills against an empty one instead of failing |  |
 | `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
 | `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
 

@@ -144,23 +144,33 @@ runs:
         AGENTGATE: ${{ steps.install.outputs.path }}
       run: |
         set -uo pipefail
-        # skills came after 0.4.0; an older release has nothing to check with.
+        # skills came after 0.4.0. A check that was asked for and cannot run
+        # fails rather than passing without having looked.
         installed=$("$AGENTGATE" --version | awk '{print $3}')
         case "$installed" in
           0.[0-4].*|v0.[0-4].*)
-            echo "::notice::agentgate $installed has no skills command; it comes with the release after 0.4.0"
-            exit 0 ;;
+            echo "::error::agentgate $installed has no skills command; it comes with the release after 0.4.0"
+            exit 1 ;;
         esac
         args=(skills verify --dir "$SKILLS_DIR")
         if [ -n "$SKILLS_LOCKFILE" ]; then args+=(--lockfile "$SKILLS_LOCKFILE"); fi
         report="$RUNNER_TEMP/agentgate-skills.md"
         "$AGENTGATE" "${args[@]}" --markdown > "$report"
         status=$?
+        if [ "$status" -ne 0 ] && ! head -n 1 "$report" | grep -q '^### agentgate skills'; then
+          # Not drift: the check itself failed (no lockfile, a broken one).
+          echo "::error::agentgate skills verify could not check the skills; see the message above"
+          exit 1
+        fi
         cat "$report" >> "$GITHUB_STEP_SUMMARY"
         echo "report=$report" >> "$GITHUB_OUTPUT"
         if [ "$status" -ne 0 ]; then
-          # The same report, readable in the log.
+          # The same report, readable in the log. Skill text is not allowed
+          # to issue workflow commands from there.
+          token="agentgate-$(od -An -N8 -tx1 /dev/urandom | tr -d ' \n')"
+          echo "::stop-commands::$token"
           "$AGENTGATE" "${args[@]}" --color never || true
+          echo "::$token::"
           if [ "$SKILLS_FAIL" = "false" ]; then
             echo "::warning::skills changed without approval; see the job summary"
             exit 0
