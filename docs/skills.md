@@ -66,7 +66,7 @@ $ agentgate skills verify
 lockfile  skills.lock
 
 SKILL                     STATUS   LABEL                                            FINDINGS
-─────                     ───────  ─────                                            ────────
+─────                     ──────   ─────                                            ────────
 .agents/skills/changelog  locked   urls                                             -
 .claude/skills/notes      changed  shell, scripts, network, urls (+network, +urls)  2 new
 
@@ -107,8 +107,11 @@ looks in the same places `lock` did without being told again.
 
 Each skill is keyed by its directory relative to the project
 (`.claude/skills/notes`), or under `~` for one in the home directory, so the
-same lockfile works on every machine. Commands that take a skill accept the
-key, its last element (`notes`) or the name in its front matter.
+same lockfile works on every machine; a repository that is itself one skill
+(`--path .`) is keyed `.`. Commands that take a skill accept the key or its
+last element (`notes`) — never the name in its front matter, which a skill
+chooses itself and could choose to be another's. A last element shared by two
+skills is refused; name the directory instead.
 
 ## What is pinned
 
@@ -122,7 +125,7 @@ For every skill, `skills.lock` records:
 | `hosts` | Every host a URL in the skill names. |
 | `accepted_findings` | The findings a human saw and approved, by rule, file and a hash of what was found — not by line, so a line added above does not reopen them. |
 | `instructions` | `SKILL.md` as it was approved, so the next change can be shown as a diff. |
-| `approved_at`, `approved_by` | When, and who (`--by`, or `$USER`). |
+| `approved_at`, `approved_by` | When, and who (`--by`, or `$USER`; left out when neither is set). |
 
 The tree has the shape of [RFC 6962](https://www.rfc-editor.org/rfc/rfc6962#section-2.1)
 (Certificate Transparency): a leaf is `SHA-256(0x00 ‖ path ‖ 0x00 ‖ kind ‖ 0x00 ‖ content-hash)`,
@@ -133,15 +136,25 @@ choices worth knowing:
   Windows checkout with `core.autocrlf` is the same skill. A carriage return on
   its own is not a line ending and does count — it can hide text in a
   terminal.
-- **Symlinks** inside a skill are recorded by where they point and never
-  followed; a skill directory that is itself a symlink is followed, since that
-  is how skills are commonly shared. Named pipes and devices are recorded and
-  never opened.
+- **Symlinks** inside a skill are pinned by where they point and, when they
+  point at a file, by what that file says — it is what the agent reads, so it
+  is scanned too. A link to a directory is not walked into. A `SKILL.md` that
+  is itself a link makes a skill like any other. A skill directory that is a
+  symlink is followed, since that is how skills are commonly shared. Named
+  pipes and devices are recorded and never opened.
+- **Stray bytes.** A Markdown file, script or config with a NUL byte or
+  invalid UTF-8 in it is still scanned, with the bad bytes replaced, and
+  flagged by `malformed-text`: one byte must not switch the scan off.
 - **Big files** are hashed in full. Only the first MiB of each is scanned,
   which the `oversized-file` rule says.
-- **Left out:** a `.git` directory that is a repository (its objects change on
-  every fetch), `.DS_Store` and `Thumbs.db`. The executable bit is not pinned:
-  Windows has none.
+- **Left out:** the content of a `.git` repository at the root of a skill —
+  one with `HEAD`, `objects` and `refs` — because its objects change on every
+  fetch. Its presence is pinned and the `git-repository` rule says it is
+  there. A directory anywhere else that only calls itself `.git` is hashed
+  like any other, and so are `.DS_Store` and `Thumbs.db`. The executable bit
+  is not pinned: Windows has none.
+- **The lockfile itself** is never part of a skill, even when it sits inside
+  one.
 
 The lockfile is indented JSON. Characters that render as nothing are written
 as `\u` escapes, so hidden text in a skill stays visible in the lockfile's own
@@ -335,7 +348,7 @@ as `--fail-on` (default `high`; `none` never fails).
 ## In CI
 
 ```yaml
-- uses: bnymnDev/agentgate@v0.5.0   # the first release with skills
+- uses: bnymnDev/agentgate@v0.5.0   # skills need the first release after 0.4.0
   id: agentgate
   with:
     skills: .                        # the project whose skills.lock to verify
@@ -343,8 +356,11 @@ as `--fail-on` (default `high`; `none` never fails).
 
 The step writes the Markdown report to the job summary, sets the
 `skills-report` output to a file with the same report, and fails when any
-skill is not as approved (`skills-fail: false` reports without failing). To
-put the report on the pull request:
+skill is not as approved (`skills-fail: false` reports without failing). A
+check that cannot run — no `skills.lock`, a broken one, or an agentgate
+release without `skills` — fails the step whatever `skills-fail` says, and
+text from a skill cannot issue workflow commands in the log. To put the
+report on the pull request:
 
 ```yaml
 - uses: marocchino/sticky-pull-request-comment@v2
@@ -355,7 +371,8 @@ put the report on the pull request:
 ```
 
 Anywhere else, `agentgate skills verify` exits 1 and
-`agentgate skills verify --markdown` writes the report.
+`agentgate skills verify --markdown` writes the report. Without a lockfile,
+`verify` fails; `--missing-ok` checks the skills against an empty one instead.
 
 ## Threat model
 
@@ -370,7 +387,8 @@ the human sees what matters.
 
 - **Any change to any file of a pinned skill**: content, added, removed and
   renamed files, a symlink pointed elsewhere, a file swapped for a pipe. The
-  Merkle root is over everything but a `.git` repository and desktop litter.
+  Merkle root is over everything but the inside of a `.git` repository at a
+  skill's root, and covers what symlinks to files point at.
 - **A new capability**, even when the change looks innocent: one `curl` in a
   code block puts `network` on the label, and `verify` fails until someone
   approves it.
@@ -395,8 +413,8 @@ Read this part.
   what is there; that is why it prints the label and the findings, and why the
   lockfile is reviewed in the same pull request as the skill.
 - **Content the skill points at is not pinned**: what a URL serves, a
-  package installed by name, a repository it clones, an image it runs, the
-  target of a symlink. The label says when a skill depends on such content
+  package installed by name, a repository it clones, an image it runs, a
+  directory a symlink points at, the inside of a `.git` repository. The label says when a skill depends on such content
   (`external-include`, `package-install`, `urls`, the `symlink` rule); it
   cannot pin it.
 - **Nothing is enforced at run time.** `skills` checks files on disk when you
@@ -433,7 +451,6 @@ Read this part.
         "scripts/find.sh": "sha256:08d32ba308041185542832cc046c60e378985d381287866ae735c4078a334570"
       },
       "label": ["shell", "scripts"],
-      "accepted_findings": [],
       "instructions": "---\nname: notes\n...",
       "approved_at": "2026-10-02T09:00:00Z",
       "approved_by": "alice"
