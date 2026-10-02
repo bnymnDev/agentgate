@@ -144,7 +144,7 @@ var rules = []Rule{
 	{ID: "exfiltration", Severity: High, scope: anywhere | inComment,
 		Title: "sends local data somewhere",
 		Why:   "'Send the file to https://...', curl -d @~/.ssh/id_rsa, curl -F with a secret, nc host port < file: the shapes data takes on its way out. An agent posting to an API it was asked to use looks the same; that is what review is for.",
-		pat: pat(`(?i)\b(send|forward|post|upload|exfiltrate|leak|transmit|e-?mail|copy|pipe|submit)\b[^.\n]{0,80}\b(to|at)\s+(https?://\S+|[\w.+-]+@[\w-]+\.[\w.-]+)|\bcurl\b[^\n]*\s(-d|--data(-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file)\s+["']?(@|\$\(|\$\{?[A-Z_]*(KEY|TOKEN|SECRET|PASS|PASSWORD|CREDENTIALS?)\b|[^\s"']*(\.ssh|\.aws|\.env\b|id_rsa|credentials|\.netrc|\.npmrc))|\b(nc|ncat|netcat)\s+(-\w+\s+)*\S+\s+\d+\s*<|\bwget\b[^\n]*--post-(file|data)`,
+		pat: pat(`(?i)\b(send|forward|post|upload|exfiltrate|leak|transmit|e-?mail|copy|pipe|submit)\b[^.\n]{0,80}\b(to|at)\s+(https?://\S+|[\w.+-]+@[\w-]+\.[\w.-]+)|\bcurl\b[^\n]*\s(-d|--data(-binary|-raw|-urlencode)?|-F|--form|-T|--upload-file)\s+["']?([\w.\[\]-]*=)?(@|\$\(|\$\{?[A-Z_]*(KEY|TOKEN|SECRET|PASS|PASSWORD|CREDENTIALS?)\b|[^\s"']*(\.ssh|\.aws|\.env\b|id_rsa|credentials|\.netrc|\.npmrc))|\b(nc|ncat|netcat)\s+(-\w+\s+)*\S+\s+\d+\s*<|\bwget\b[^\n]*--post-(file|data)`,
 			"send", "forward", "post", "upload", "exfiltrate", "leak", "transmit", "mail", "copy", "pipe", "submit", "curl", "nc", "netcat", "wget")},
 	{ID: "credential-access", Severity: High, scope: anywhere | inComment,
 		Title: "reads credentials, keys or the whole environment",

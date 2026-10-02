@@ -443,6 +443,13 @@ All of it in [docs/integrations.md](docs/integrations.md).
 | `run [flags]` | Run the proxy |
 | `sessions [flags]` | List recorded sessions |
 | `show <session-id> [flags]` | Show the calls of one session |
+| `skills` | Pin Agent Skills in a lockfile, label what they can do, and review every change |
+| `skills approve [skill...] [flags]` | Accept skills as they are now: files, label and findings |
+| `skills diff [skill...] [flags]` | Show what changed in a skill since it was approved, sentence by sentence |
+| `skills label [skill...] [flags]` | Show what each skill can do, and where it says so |
+| `skills lock [flags]` | Pin every skill that is not in skills.lock yet |
+| `skills scan <skill-dir>... [flags]` | Vet skills before you install them: label and findings, no lockfile |
+| `skills verify [flags]` | Exit 1 if any skill changed, gained a capability or appeared since it was approved |
 | `stats [flags]` | What did the agent actually do? Per tool, per rule |
 | `status` | Show the gateway's state at a glance |
 | `tail [flags]` | Watch tool calls scroll by, live |

@@ -457,6 +457,73 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--json` | print as JSON |  |
 | `--tool` | only calls whose tool name contains this |  |
 
+### `skills approve [skill...] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--all` | approve every skill that is not as it was approved |  |
+| `--by` | who is approving, for the lockfile (default ) |  |
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
+| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
+| `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
+
+### `skills diff [skill...] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
+| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--markdown` | print the diff as Markdown |  |
+| `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
+| `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
+
+### `skills label [skill...] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
+| `--json` | print the labels as JSON |  |
+| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--markdown` | print a badge and a table per skill, as Markdown |  |
+| `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
+| `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
+
+### `skills lock [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--by` | who is approving, for the lockfile (default ) |  |
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
+| `--json` | print the skills pinned as JSON |  |
+| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
+| `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
+
+### `skills scan <skill-dir>... [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--fail-on` | exit 1 on a finding this severe or worse: high, medium, low or none | `high` |
+| `--json` | print the results as JSON |  |
+
+### `skills verify [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--dir` | the project directory: skills are looked for, and keyed, relative to it | `.` |
+| `--json` | print the reports as JSON |  |
+| `--lockfile` | the lockfile (default <dir>/skills.lock) |  |
+| `--markdown` | print the report as Markdown, for a pull request or a job summary |  |
+| `--path` | also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile) |  |
+| `--user` | also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile) |  |
+
 ### `stats [flags]`
 
 | Flag | What it does | Default |
