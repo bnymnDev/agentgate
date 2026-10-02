@@ -20,7 +20,7 @@ list are on the [releases page](https://github.com/bnymnDev/agentgate/releases).
   nobody approved, `diff` shows a changed `SKILL.md` sentence by sentence with
   new imperatives and hidden text marked, `approve` accepts a skill as it is,
   `label` shows what a skill can do and writes a badge, and `scan` vets a
-  skill before it is installed. 40 deterministic rules, among them Unicode
+  skill before it is installed. 42 deterministic rules, among them Unicode
   tag, bidi, zero-width and variation-selector tricks, look-alike hosts,
   encoded payloads, `curl | sh`, conditional triggers, exfiltration,
   persistence and load-time shell commands. No network, no model.

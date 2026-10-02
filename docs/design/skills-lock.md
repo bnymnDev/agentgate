@@ -63,7 +63,7 @@ internal/skills/      the package
   markdown.go         front matter, prose, fenced code, inline code, HTML comments
   match.go            keyword prefilter in front of regular expressions
   rules.go            finding type, scan driver, rule helpers
-  ruletable.go        the 40 rules
+  ruletable.go        the 42 rules
   label.go            the 10 capability classes and their evidence
   lockfile.go         skills.lock: load, save, check, approve
   diff.go             sentence-level prose diff, imperative detection
@@ -169,6 +169,53 @@ e2e/skills_test.go      the real binary against prepared skill directories
 - **The WASM page**: paste a `SKILL.md`, see the label, findings and hidden
   text — `scan` compiled to WebAssembly.
 
+## Review
+
+Before completion, the feature was reviewed adversarially by four reviewers —
+correctness, security (evasion, symlinks, traversal, size), consistency with
+the rest of agentgate, and documentation against the acceptance criteria —
+each followed by a skeptic that tried to refute every finding by reproducing
+it. 21 findings were confirmed, one was refuted (CRLF normalisation of shell
+scripts: bash on Linux and macOS treats the `CR` as part of the command, so
+the flip is a visible break rather than a silent change). All 21 were fixed,
+each with a test:
+
+| Finding | Fix |
+|---|---|
+| One invalid byte made `SKILL.md` "binary" and switched every text rule off | text-like files are scanned with bad bytes replaced; new rule `malformed-text` (high) |
+| A fenced block inside an HTML comment was read as code, not as a hidden comment | comment blocks are recognised before fences |
+| A skill whose `SKILL.md` is a symlink was not found at all | it is a skill; a symlink to a file is pinned and scanned by its target's content |
+| Any `.git/` with a `HEAD`, `.DS_Store` and `Thumbs.db` were not hashed | only a real repository at the skill root is left out, with a `git-repository` finding; everything else is hashed |
+| `approve <name>` matched the skill's own front-matter name, so one skill could be approved as another | matching by directory only; an ambiguous name is refused |
+| `--path .` gave a machine-specific key and hashed the lockfile into the skill | key `.`; the lockfile is excluded |
+| A variation selector inside a word, a curly apostrophe or a double space defeated prose rules | folded out before matching; a selector after ASCII is a `variation-selectors` finding |
+| The keyword prefilter missed matches starting on the previous line | windows start one line earlier |
+| `curl … \| /bin/bash`, `\| /usr/bin/env bash`, `\| tee f \| sh` were not `pipe-to-shell` | the pattern allows paths and intermediate stages |
+| Paths, keys and details could carry escape sequences and newlines to the terminal | everything printed from a skill goes through `RevealLine` |
+| Skill text in the Action log could issue workflow commands | the log output is wrapped in `::stop-commands::` |
+| Line counting was quadratic; a file could produce millions of findings | counted once per pass; at most 50 per rule and stretch |
+| A missing `--dir`, a `--path` that names nothing, or no lockfile passed `verify` | they fail; `verify --missing-ok` opts in |
+| The Action reported a broken check as drift, and passed on old releases | a failed check fails the step; an old release fails it too |
+| `gendocs` expanded `$` in generated text (`${IFS}` vanished) | content is inserted literally — a bug that predates this feature |
+| Diff lines pointed at the paragraph, not the sentence; inline code in an added sentence was not read as code | per-sentence lines; prose and code scanned separately |
+| `--lockfile` usage text had `<dir>` that GitHub strips; `lock --json` printed `null`; docs example and placeholder status | fixed |
+
 ## Status against the acceptance criteria
 
-See the end of this document; it is updated after the review.
+| | Criterion | Status | Evidence |
+|---|---|---|---|
+| a | `skills lock\|verify\|diff\|label\|approve` work and are documented, `make docs` without drift | ✅ | plus `scan`; [docs/skills.md](../skills.md), generated command and flag tables in README and [config.md](../config.md); CI job "docs are in sync" |
+| b | Merkle root over all files; every file change caught by `verify` | ✅ | `merkle.go`; `TestMerkleRoot` (RFC 6962 shape), `TestEveryFileChangeIsCaught` (edit, add, hidden file, remove, rename, one byte), `TestSymlinksArePinnedByTargetAndContent`, `TestDirectoriesThatOnlyLookLikeGitArePinned`, `TestOversizedFileIsHashedWhole`; e2e "a one-byte change to a script fails verify" |
+| c | Label derives at least 7 capability classes, golden tests | ✅ | 10 classes; `TestLabelFixtures` with goldens in `testdata/skills/golden/label`, `TestEveryCapabilityHasAFixture` |
+| d | At least 25 heuristics with fixtures, Unicode tag, bidi and zero-width included | ✅ | 42 rules, each with a fixture (38 in `testdata/skills/rules`, 4 built by tests) and a golden; `TestEveryRuleHasAFixture`; false-positive guard `TestCleanFixturesFindNothing`; `TestReviewedEvasionsAreCaught` |
+| e | Prose diff marks new imperatives and new capabilities, terminal and Markdown | ✅ | `diff.go`; `TestProseDiff*`, `TestImperative`; `printDetails` (terminal), `Markdown`/`MarkdownDiff`; e2e checks `[imperative, …]` and the Markdown report |
+| f | `verify` exits non-zero on an unapproved change, `approve` resets (e2e) | ✅ | `TestSkillsLockVerifyApprove` in `e2e/skills_test.go` |
+| g | GitHub Action can check skills, backwards compatible | ✅ | `skills`, `skills-lockfile`, `skills-fail` inputs, `skills-report` output, all off by default; CI job "GitHub Action works" runs a clean and a drifted project |
+| h | `make test`, `make e2e`, `make vet`, `make lint` green; CHANGELOG under Unreleased | ✅ | `go test -race ./...`, e2e, vet and golangci-lint v2.13.2 (the version CI pins) pass locally; CI green on Linux, macOS and Windows; CHANGELOG "Unreleased → Added" |
+| i | `docs/skills.md` with threat model and limits; README section | ✅ | [Threat model](../skills.md#threat-model) with "What it does not do"; README "Skill lockfile" row, recording, CI note, docs table |
+| j | This design document with status | ✅ | this section |
+| — | 40+ tests, `-race` green, no cgo, no new network access | ✅ | 118 passing test cases in `internal/skills`, 6 e2e cases; one new direct dependency, `golang.org/x/text` (already in the module graph) |
+| — | 200 skills in under a second | ✅ | `TestTwoHundredSkillsUnderASecond`: about 0.25 s locally |
+| — | Demo transcript | ✅ | `docs/demo/skills.txt` and `skills.gif`, rendered by `make demo`'s renderer from real output |
+| — | Policy integration | ⚠️ | not built; why, and what would replace it, under decision 11 and the roadmap |
+| — | WASM web demo (original pitch) | ❌ | out of scope for this repository; on the roadmap |
