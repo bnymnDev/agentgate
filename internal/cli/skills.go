@@ -555,13 +555,8 @@ func printSkillTable(w *lineWriter, lock *skills.Lockfile, reports []skills.Repo
 		fmt.Fprintln(w.out, "no skills found; agentgate looks in .claude/skills, .agents/skills and .codex/skills (more with --path and --user)")
 		return
 	}
-	// The status is padded before it is coloured, so the colour codes do
-	// not throw the columns out.
-	width := len("STATUS")
-	for _, r := range reports {
-		width = max(width, len(r.Status))
-	}
-	t := newTable(w.out, "SKILL", fmt.Sprintf("%-*s", width, "STATUS"), "LABEL", "FINDINGS")
+	// Plain text: colour codes would throw the columns out.
+	t := newTable(w.out, "SKILL", "STATUS", "LABEL", "FINDINGS")
 	for _, r := range reports {
 		findings := "-"
 		if n := len(r.Unaccepted); n > 0 {
@@ -573,11 +568,7 @@ func printSkillTable(w *lineWriter, lock *skills.Lockfile, reports []skills.Repo
 		if len(r.Gained) > 0 && r.Status != skills.StatusNew {
 			label += " (+" + strings.Join(r.Gained, ", +") + ")"
 		}
-		status := fmt.Sprintf("%-*s", width, r.Status)
-		if w.colour {
-			status = strings.Replace(status, string(r.Status), w.status(r.Status), 1)
-		}
-		t.row(truncate(skills.Reveal(r.Key), 48), status, truncate(label, 60), findings)
+		t.row(truncate(skills.Reveal(r.Key), 48), r.Status, truncate(label, 60), findings)
 	}
 	t.flush()
 }
