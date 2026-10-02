@@ -111,6 +111,14 @@ deny-by-default allow-list.
 
 ![agentgate in shadow mode, then stats, then policy suggest writing an allow-list](docs/demo/onboard.gif)
 
+**A skill gets an update.** One new sentence in a long list — and, invisible
+in any editor, an instruction to keep quiet about it. `verify` fails because
+the skill changed and gained network access; `diff` shows the one sentence,
+marks it as an order to the model, spells out the hidden text and names the
+rules it trips.
+
+![agentgate skills: lock pins two skills; after an edit, verify fails with a new network capability and hidden text, diff shows the one added sentence, approve accepts it](docs/demo/skills.gif)
+
 **Ask before you ship a rule.** `check` evaluates a single call against the
 policy — at any time of day you like, with any budget already spent — and
 exits non-zero on a deny, so it works as a test in CI.
@@ -227,6 +235,7 @@ serves the ones that connect over HTTP.
 | **Canaries** | `agentgate canary new` plants a fake AWS, GitHub, OpenAI or Stripe key. Nothing legitimate ever sends it anywhere, so a call that does is stopped — in plain text, base64, hex, URL-encoded or reversed. |
 | **Injection in results** | A result with hidden text or instructions aimed at the model labels the session `injection-suspected`; `strip_invisible` takes the hidden characters out before the model reads them. |
 | **Honeypots** | A decoy tool — `db__drop_all_tables` — that nothing legitimate calls. Calling it is a prompt injection caught red-handed, and can freeze everything on the spot. |
+| **Skill lockfile** | Agent Skills — `SKILL.md` and the scripts next to it — pinned in `skills.lock` by a Merkle root over every file, each with a label of what it can do: shell, network, secrets, writes outside the project, package installs, remote content. A changed skill, a new capability or a new finding fails `agentgate skills verify` until someone approves it, and `skills diff` shows what the instructions now say, sentence by sentence. |
 | **Live view** | `agentgate tail` in any terminal, and a web UI with a live page, the approvals inbox, the pinned tools and a trust button. |
 
 ### Prove
@@ -405,6 +414,10 @@ approval:
     fail-on: canary>0,honeypot>0,quarantine>0
 ```
 
+**For skills.** `skills: .` checks every Agent Skill in the repository
+against `skills.lock`, writes the prose diff to the job summary and fails on
+a change nobody approved — see [docs/skills.md](docs/skills.md#in-ci).
+
 **In a container.** `ghcr.io/bnymndev/agentgate` is the binary alone on
 distroless, non-root, for amd64 and arm64.
 
@@ -488,6 +501,7 @@ Every flag: [docs/config.md](docs/config.md).
 | [docs/policies.md](docs/policies.md) | The rule language in full: selectors, matchers, labels, packs, lint, tests |
 | [docs/config.md](docs/config.md) | Every field of `agentgate.yaml`, every CLI flag |
 | [docs/integrations.md](docs/integrations.md) | `init`, `doctor`, the GitHub Action, containers, OpenTelemetry, `mock`, your phone |
+| [docs/skills.md](docs/skills.md) | The skills lockfile: what is pinned, the label, the rules, the prose diff, CI, and the threat model — what it catches and what it does not |
 | [docs/replay.md](docs/replay.md) | Replay, diff, stats, and the shadow → suggest → enforce workflow |
 | [docs/architecture.md](docs/architecture.md) | How the proxy works, and what it deliberately does not do |
 | [docs/comparison.md](docs/comparison.md) | Versus raw servers, wrapper scripts, host prompts and sandboxes |
@@ -515,7 +529,7 @@ Changes between releases are listed in [CHANGELOG.md](CHANGELOG.md).
 
 v0.4. Everything in this README is implemented and covered by tests,
 including the end-to-end suite that drives the real binary. Not in it, on
-purpose: asking a model whether a call is safe (rules are deterministic so
+purpose: asking a model whether a call — or a skill — is safe (rules are deterministic so
 that `replay` can be trusted), central or multi-user management, governing
 prompts and resources (they pass through untouched), and authentication in
 front of the web UI (it refuses to bind to anything but localhost unless you
