@@ -2,6 +2,7 @@ package skills
 
 import (
 	"regexp"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -95,15 +96,18 @@ func added(u unit) DiffLine {
 		d.Imperative = Imperative(u.text)
 	}
 	seen := map[string]bool{}
-	seg := segment{kind: u.kind, text: u.text, line: u.line}
+	segs := []segment{{kind: u.kind, text: u.text, line: u.line}}
 	if u.kind == segProse {
-		// A sentence can hold inline code; read it as both.
-		seg.kind = segText
+		// A sentence can hold inline code: read the prose as prose and the
+		// code as code, as the scan of the whole file does.
+		segs = proseSegments(u.text, u.line)
 	}
-	for _, f := range scanSegment("SKILL.md", seg) {
-		if !seen[f.Rule] {
-			seen[f.Rule] = true
-			d.Rules = append(d.Rules, f.Rule)
+	for _, seg := range segs {
+		for _, f := range scanSegment(ManifestName, seg) {
+			if !seen[f.Rule] {
+				seen[f.Rule] = true
+				d.Rules = append(d.Rules, f.Rule)
+			}
 		}
 	}
 	return d
@@ -196,20 +200,24 @@ func lineUnits(seg segment, kind segKind) []unit {
 }
 
 // proseUnits splits prose into blocks (paragraphs, list items, headings),
-// and blocks into sentences.
+// and blocks into sentences, each with the line it starts on.
 func proseUnits(seg segment) []unit {
 	var out []unit
-	var block []string
-	start := 0
+	var (
+		block  []string
+		starts []int // where each line of the block starts in the joined text
+		lines  []int
+	)
 	flush := func() {
 		if len(block) == 0 {
 			return
 		}
 		joined := strings.Join(block, " ")
-		for _, s := range sentences(joined) {
-			out = append(out, unit{kind: segProse, line: seg.line + start, text: s, key: "p" + squash(s)})
+		for _, sp := range sentenceSpans(joined) {
+			k := sort.SearchInts(starts, sp.start+1) - 1
+			out = append(out, unit{kind: segProse, line: seg.line + lines[max(k, 0)], text: sp.text, key: "p" + squash(sp.text)})
 		}
-		block = nil
+		block, starts, lines = nil, nil, nil
 	}
 	for i, l := range strings.Split(seg.text, "\n") {
 		l = strings.TrimRight(l, "\r")
@@ -220,19 +228,35 @@ func proseUnits(seg segment) []unit {
 		if blockStart.MatchString(l) {
 			flush()
 		}
-		if len(block) == 0 {
-			start = i
+		off := 0
+		for _, b := range block {
+			off += len(b) + 1
 		}
+		starts = append(starts, off)
+		lines = append(lines, i)
 		block = append(block, strings.TrimSpace(l))
 	}
 	flush()
 	return out
 }
 
+type span struct {
+	start int
+	text  string
+}
+
 // sentences splits a block after ., ! or ? when what follows starts a new
 // sentence.
 func sentences(s string) []string {
 	var out []string
+	for _, sp := range sentenceSpans(s) {
+		out = append(out, sp.text)
+	}
+	return out
+}
+
+func sentenceSpans(s string) []span {
+	var out []span
 	last := 0
 	for i := 0; i < len(s); i++ {
 		c := s[i]
@@ -259,13 +283,13 @@ func sentences(s string) []string {
 		}
 		r, _ := utf8.DecodeRuneInString(s[k:])
 		if unicode.IsUpper(r) || strings.ContainsRune("\"'(*[`_", r) || unicode.IsDigit(r) {
-			out = append(out, strings.TrimSpace(s[last:j]))
+			out = append(out, span{last, strings.TrimSpace(s[last:j])})
 			last = k
 			i = k - 1
 		}
 	}
 	if rest := strings.TrimSpace(s[last:]); rest != "" {
-		out = append(out, rest)
+		out = append(out, span{last, rest})
 	}
 	return out
 }

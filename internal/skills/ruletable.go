@@ -3,6 +3,7 @@ package skills
 import (
 	"regexp"
 	"strings"
+	"unicode/utf8"
 )
 
 // rules is every check, grouped as the documentation groups them. Each one
@@ -42,7 +43,7 @@ var rules = []Rule{
 		}},
 	{ID: "variation-selectors", Severity: Medium, scope: anywhere | inComment, raw: true,
 		Title: "variation selectors strung together, a way to hide bytes inside a single character",
-		Why:   "A variation selector picks a glyph variant and renders as nothing. One after an emoji is ordinary; a run of them, or one from the supplementary block (U+E0100-U+E01EF), can encode arbitrary data behind a single visible character.",
+		Why:   "A variation selector picks a glyph variant and renders as nothing. One after an emoji is ordinary; one inside an ASCII word splits it so a filter misses it, and a run of them, or one from the supplementary block (U+E0100-U+E01EF), can encode arbitrary data behind a single visible character.",
 		find: func(t string) []hit {
 			return runeHits(t, func(text string, i int, r rune) bool {
 				if r >= 0xE0100 && r <= 0xE01EF {
@@ -50,6 +51,11 @@ var rules = []Rule{
 				}
 				if r < 0xFE00 || r > 0xFE0F {
 					return false
+				}
+				// After a letter, digit or punctuation mark a selector does
+				// nothing but split the word.
+				if prev, _ := utf8.DecodeLastRuneInString(text[:i]); prev < 0x80 {
+					return true
 				}
 				next := i + 3
 				return next+3 <= len(text) && text[next] == 0xEF && text[next+1] == 0xB8 && text[next+2] >= 0x80 && text[next+2] <= 0x8F
@@ -98,7 +104,7 @@ var rules = []Rule{
 	{ID: "pipe-to-shell", Severity: High, scope: anywhere | inComment,
 		Title: "downloads a script and runs it unseen (curl | sh)",
 		Why:   "Whatever the server sends at the moment the agent runs the line is executed, and the lockfile pins none of it: the skill can stay byte-identical while what it runs changes every day.",
-		pat: pat(`(?i)\b(curl|wget|fetch|aria2c)\b[^\n|]{0,300}\|\s*(sudo\s+(-\S+\s+)*)?(env\s+\S+\s+)?((ba|z|da|k|fi)?sh|python[23]?|perl|ruby|node|php|bun|deno)\b|\b(ba|z)?sh\s+(-c\s+)?["']?\$\(\s*(curl|wget)\b|(\bsource|\.|\b(ba|z)?sh)\s+<\(\s*(curl|wget)\b`,
+		pat: pat(`(?i)\b(curl|wget|fetch|aria2c)\b[^\n]{0,300}?\|\s*(sudo\s+(-\S+\s+)*)?((/usr)?(/local)?/bin/)?(env\s+(-\S+\s+)*)?(\w+=\S*\s+)*((ba|z|da|k|fi)?sh|python[23]?|perl|ruby|node|php|bun|deno)\b|\b(ba|z)?sh\s+(-c\s+)?["']?\$\(\s*(curl|wget)\b|(\bsource|\.|\b(ba|z)?sh)\s+<\(\s*(curl|wget)\b`,
 			"curl", "wget", "fetch", "aria2c")},
 	{ID: "powershell-download-exec", Severity: High, scope: anywhere | inComment,
 		Title: "PowerShell that downloads code and runs it (iwr | iex)",

@@ -300,10 +300,11 @@ func TestDiscoverLooksWhereAgentsLook(t *testing.T) {
 
 func TestReportMatch(t *testing.T) {
 	r := Report{Key: ".claude/skills/pdf-forms", Name: "pdf"}
-	for _, n := range []string{".claude/skills/pdf-forms", "pdf-forms", "pdf", `.claude\skills\pdf-forms`, ".claude/skills/pdf-forms/"} {
+	for _, n := range []string{".claude/skills/pdf-forms", "pdf-forms", `.claude\skills\pdf-forms`, ".claude/skills/pdf-forms/"} {
 		assert.True(t, r.Match(n), n)
 	}
 	assert.False(t, r.Match("forms"))
+	assert.False(t, r.Match("pdf"), "the front matter name is the skill's own claim")
 }
 
 // Two hundred skills, each with a script and a reference, are hashed,

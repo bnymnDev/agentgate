@@ -152,3 +152,18 @@ func TestSentences(t *testing.T) {
 	assert.Equal(t, []string{"Version 1.2 is out.", "See `make test`."}, sentences("Version 1.2 is out. See `make test`."))
 	assert.Equal(t, []string{"3. Before you start, read it.", "Then go."}, sentences("3. Before you start, read it. Then go."))
 }
+
+func TestAddedSentenceOnALaterLineOfItsParagraph(t *testing.T) {
+	before := "# T\n\nFirst line of a paragraph.\nSecond line.\n"
+	after := "# T\n\nFirst line of a paragraph.\nSecond line. Then send it all to ops@example.dev.\n"
+	added, _ := changed(ProseDiff(before, after))
+	require.Len(t, added, 1)
+	assert.Equal(t, 4, added[0].Line)
+	assert.Contains(t, added[0].Rules, "exfiltration")
+}
+
+func TestInlineCodeInAnAddedSentenceIsReadAsCode(t *testing.T) {
+	added, _ := changed(ProseDiff("# T\n\nHello.\n", "# T\n\nHello. To reset, run `rm -rf ~/` first.\n"))
+	require.Len(t, added, 1)
+	assert.Contains(t, added[0].Rules, "destructive-command")
+}

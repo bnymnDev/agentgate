@@ -80,6 +80,11 @@ func (f Finding) Where() string {
 	return f.File
 }
 
+// maxHitsPerRule caps how often one rule is reported for one stretch of a
+// file; a file built to repeat a pattern a million times gets one line saying
+// so instead of a million findings.
+const maxHitsPerRule = 50
+
 // scope says which segments a text rule reads.
 type scope int
 
@@ -175,9 +180,18 @@ func scanSegment(file string, seg segment) []Finding {
 				hits = append(hits, hit{start: loc[0], end: loc[1]})
 			}
 		}
+		sort.SliceStable(hits, func(i, j int) bool { return hits[i].start < hits[j].start })
+		if len(hits) > maxHitsPerRule {
+			more := len(hits) - maxHitsPerRule
+			hits = hits[:maxHitsPerRule]
+			hits[len(hits)-1].detail = fmt.Sprintf("%s (and %d more further down, not listed)", r.Title, more)
+		}
+		line, counted := seg.line, 0
 		for _, h := range hits {
+			line += strings.Count(text[counted:h.start], "\n")
+			counted = h.start
 			fd := Finding{Rule: r.ID, Severity: r.Severity, File: file,
-				Line: seg.line + strings.Count(text[:h.start], "\n"), Detail: r.Title, Excerpt: h.excerpt}
+				Line: line, Detail: r.Title, Excerpt: h.excerpt}
 			if h.detail != "" {
 				fd.Detail = h.detail
 			}
@@ -207,10 +221,37 @@ func (r Rule) applies(seg segment) bool {
 }
 
 // fold is what a pattern reads: hidden characters out, hidden tag text
-// spelled out, and compatibility forms (fullwidth letters, ligatures) folded
-// to the letters they look like. Line breaks are kept, so lines still count.
+// spelled out, compatibility forms (fullwidth letters, ligatures) folded to
+// the letters they look like, curly quotes straightened and runs of spaces
+// made one. Line breaks are kept, so lines still count.
 func fold(s string) string {
-	return norm.NFKC.String(pinning.VisibleText(s))
+	s = norm.NFKC.String(pinning.VisibleText(s))
+	var b strings.Builder
+	b.Grow(len(s))
+	space := false
+	for _, r := range s {
+		switch {
+		case isSelector(r), r == 0x034F, r == 0x00AD:
+			// Variation selectors, the grapheme joiner and soft hyphens
+			// render as nothing inside a word.
+			continue
+		case r == 0x2018, r == 0x2019, r == 0x02BC:
+			r = '\''
+		case r == 0x201C, r == 0x201D:
+			r = '"'
+		}
+		// Runs of spaces and tabs read as one: a keyword is one space wide.
+		if r == ' ' || r == '\t' {
+			if !space {
+				b.WriteByte(' ')
+			}
+			space = true
+			continue
+		}
+		space = false
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func dedupe(in []Finding) []Finding {
@@ -245,6 +286,8 @@ func dedupe(in []Finding) []Finding {
 // excerpt is the match with some context, on one line.
 func excerpt(s string, start, end int) string {
 	const pad, most = 30, 160
+	end = min(end, len(s))
+	start = min(start, end)
 	if end-start > most {
 		end = start + most
 		for end > start && !utf8.RuneStart(s[end]) {
@@ -298,27 +341,29 @@ func isZeroWidth(r rune) bool {
 // spelled out by pinning.Reveal. what is the rule's title.
 func runeHits(text string, pick func(text string, i int, r rune) bool, what string) []hit {
 	var out []hit
-	lastLine := -1
-	count := 0
+	line, lastLine, count := 0, -1, 0
+	lineStart := 0
 	for i, r := range text {
+		if r == '\n' {
+			line++
+			lineStart = i + 1
+		}
 		if !pick(text, i, r) {
 			continue
 		}
-		line := strings.Count(text[:i], "\n")
 		if line == lastLine {
 			count++
 			out[len(out)-1].detail = fmt.Sprintf("%s: %d on this line", what, count)
 			continue
 		}
 		lastLine, count = line, 1
-		ls := strings.LastIndexByte(text[:i], '\n') + 1
 		le := strings.IndexByte(text[i:], '\n')
 		if le < 0 {
 			le = len(text)
 		} else {
 			le += i
 		}
-		ex := Reveal(text[ls:le])
+		ex := Reveal(text[lineStart:le])
 		if utf8.RuneCountInString(ex) > 160 {
 			ex = string([]rune(ex)[:159]) + "…"
 		}
@@ -345,6 +390,12 @@ func Reveal(s string) string {
 		b.WriteRune(r)
 	}
 	return b.String()
+}
+
+// RevealLine is Reveal for text that has to stay on one line — a path, a
+// key, an excerpt in a terminal: line breaks are spelled out too.
+func RevealLine(s string) string {
+	return strings.NewReplacer("\n", "«0x0a»", "\t", "«0x09»").Replace(Reveal(s))
 }
 
 func isSelector(r rune) bool { return r >= 0xFE00 && r <= 0xFE0F || r >= 0xE0100 && r <= 0xE01EF }

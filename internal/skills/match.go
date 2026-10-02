@@ -9,8 +9,8 @@ import (
 // pattern is a regular expression with the keywords one of which every match
 // contains. Go's regexp engine is linear but not fast on long alternations,
 // so a pattern runs only on the lines where a keyword occurs — found by a
-// plain substring search — and on the lines right after them, for a match
-// that wraps. Keywords are lowercase ASCII and are looked up in a lowercased
+// plain substring search — and on the line before and the lines after them,
+// for a match that wraps. Keywords are lowercase ASCII and are looked up in a lowercased
 // copy of the text.
 type pattern struct {
 	re   *regexp.Regexp
@@ -75,7 +75,12 @@ func windows(lower string, keys []string) [][2]int {
 				break
 			}
 			at := off + i
+			// From the line before the keyword's — a match may start on it
+			// when prose is wrapped — through wrapLines lines after.
 			start := strings.LastIndexByte(lower[:at], '\n') + 1
+			if start > 0 {
+				start = strings.LastIndexByte(lower[:start-1], '\n') + 1
+			}
 			end := at
 			for n := 0; n <= wrapLines && end < len(lower); n++ {
 				j := strings.IndexByte(lower[end:], '\n')

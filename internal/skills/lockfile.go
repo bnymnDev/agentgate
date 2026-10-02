@@ -380,16 +380,15 @@ func sortChanges(c []FileChange) {
 }
 
 // Match reports whether a name given on the command line means this skill:
-// its key, its name, or the last element of its key.
+// its key, or the last element of its key. The name in the front matter is
+// not matched: a skill chooses that itself, and could choose another's.
 func (r Report) Match(name string) bool {
 	name = strings.TrimSuffix(filepathToSlash(name), "/")
-	if name == r.Key || name == r.Name {
+	if name == r.Key {
 		return true
 	}
-	if i := strings.LastIndexByte(r.Key, '/'); i >= 0 && r.Key[i+1:] == name {
-		return true
-	}
-	return false
+	i := strings.LastIndexByte(r.Key, '/')
+	return i >= 0 && r.Key[i+1:] == name
 }
 
 func filepathToSlash(s string) string { return strings.ReplaceAll(s, `\`, "/") }

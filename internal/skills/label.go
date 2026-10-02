@@ -107,7 +107,7 @@ var capabilities = []Capability{
 	{ID: "external-include", Title: "depends on content that is not in the skill",
 		Why:   "Instructions or code fetched when the skill runs: curl | sh, a script piped from the network, 'follow the instructions at https://...', a repository cloned and run, a container image, or a package run straight from a registry. The lockfile pins the pointer, not what it points at.",
 		scope: anywhere,
-		pat: pat(`(?i)\b(curl|wget)\b[^\n|]{0,300}\|\s*(sudo\s+)?\w*sh\b|(\bsource|\.|\b(ba|z)?sh)\s+<\(\s*(curl|wget)|\b(fetch|load|read|follow|download|get|import|apply)\b[^.\n]{0,40}\b(instructions?|rules|prompts?|guidelines|steps|skill|commands|config(uration)?)\b[^.\n]{0,40}\bfrom\s+<?https?://|\bgit\s+clone\b|\bdocker\s+run\b|\bnpx\s+(-y\s+|--yes\s+)?[@\w]|\buvx\s+\w|\bpipx\s+run\b|\b(iex|invoke-expression)\b`,
+		pat: pat(`(?i)\b(curl|wget)\b[^\n]{0,300}?\|\s*(sudo\s+)?((/usr)?(/local)?/bin/)?(env\s+)?\w*sh\b|(\bsource|\.|\b(ba|z)?sh)\s+<\(\s*(curl|wget)|\b(fetch|load|read|follow|download|get|import|apply)\b[^.\n]{0,40}\b(instructions?|rules|prompts?|guidelines|steps|skill|commands|config(uration)?)\b[^.\n]{0,40}\bfrom\s+<?https?://|\bgit\s+clone\b|\bdocker\s+run\b|\bnpx\s+(-y\s+|--yes\s+)?[@\w]|\buvx\s+\w|\bpipx\s+run\b|\b(iex|invoke-expression)\b`,
 			"curl", "wget", "source", "<(", "http", "git", "docker", "npx", "uvx", "pipx", "iex", "invoke-expression")},
 	{ID: "auto-trigger", Title: "comes into play without being asked",
 		Why:   "Hooks in the front matter, which run on the agent's events, and a description that claims every conversation. Every skill the model may invoke is pulled in by its description; the label flags the ones that ask for everything.",
@@ -195,10 +195,10 @@ func shellEvidence(s *Skill) []Evidence {
 			switch {
 			case seg.loadTime:
 				out = append(out, Evidence{Capability: "shell", File: f.Path, Line: seg.line,
-					Excerpt: "runs as the skill loads: " + excerpt(fold(seg.text), 0, min(len(seg.text), 60))})
+					Excerpt: "runs as the skill loads: " + head(fold(seg.text), 60)})
 			case seg.kind == segCode && shellLangs[seg.lang] && strings.TrimSpace(seg.text) != "":
 				out = append(out, Evidence{Capability: "shell", File: f.Path, Line: seg.line,
-					Excerpt: "```" + seg.lang + " block: " + excerpt(fold(seg.text), 0, min(len(seg.text), 60))})
+					Excerpt: "```" + seg.lang + " block: " + head(fold(seg.text), 60)})
 			}
 		}
 	}
@@ -210,6 +210,9 @@ func shellEvidence(s *Skill) []Evidence {
 	}
 	return out
 }
+
+// head is the start of a text, on one line.
+func head(s string, n int) string { return excerpt(s, 0, min(len(s), n)) }
 
 var (
 	shellTools       = regexp.MustCompile(`(?i)\b(bash|shell|powershell|terminal)\b`)

@@ -125,6 +125,24 @@ func markdownSegments(text string) []segment {
 	}
 	for pos < len(text) {
 		line, next := lineAt(text, pos)
+		// An HTML comment that starts a line runs to its -->, fences and
+		// all: a code block inside one is hidden on the rendered page too.
+		if lead := len(line) - len(strings.TrimLeft(line, " ")); lead <= 3 && strings.HasPrefix(line[lead:], "<!--") {
+			flushProse(pos)
+			open := pos + lead + len("<!--")
+			end := strings.Index(text[open:], "-->")
+			close := len(text)
+			if end >= 0 {
+				close = open + end
+			}
+			out = append(out, segment{kind: segComment, text: text[open:close], line: lineOf(text, open)})
+			_, pos = lineAt(text, min(close, len(text)-1))
+			if close >= len(text) {
+				pos = len(text)
+			}
+			proseStart = pos
+			continue
+		}
 		m := fenceOpen.FindStringSubmatch(strings.TrimRight(line, "\r"))
 		if m == nil || (m[1][0] == '`' && strings.Contains(m[2], "`")) {
 			pos = next
