@@ -59,7 +59,7 @@ type skillFlags struct {
 
 func (f *skillFlags) register(cmd *cobra.Command) {
 	cmd.Flags().StringVar(&f.dir, "dir", ".", "the project directory: skills are looked for, and keyed, relative to it")
-	cmd.Flags().StringVar(&f.lockfile, "lockfile", "", "the lockfile (default <dir>/skills.lock)")
+	cmd.Flags().StringVar(&f.lockfile, "lockfile", "", "the lockfile (default: skills.lock in --dir)")
 	cmd.Flags().StringArrayVar(&f.paths, "path", nil, "also look in this directory, relative to --dir; a glob, a skills directory or one skill (repeatable; remembered in the lockfile)")
 	cmd.Flags().BoolVar(&f.user, "user", false, "also look in ~/.claude/skills, ~/.agents/skills, ~/.codex/skills and Claude Code plugins (remembered in the lockfile)")
 	cmd.Flags().StringVar(&f.colour, "color", "auto", "colour the output: auto, always or never")
@@ -77,9 +77,26 @@ func (f *skillFlags) open(cmd *cobra.Command) (*session, error) {
 	if err != nil {
 		return nil, err
 	}
+	if fi, err := os.Stat(f.dir); err != nil || !fi.IsDir() {
+		return nil, fmt.Errorf("--dir %s: not a directory", f.dir)
+	}
+	// A --path that names nothing is a typo, not a project without skills.
+	for _, p := range f.paths {
+		full := p
+		if !filepath.IsAbs(full) && !strings.HasPrefix(full, "~") {
+			full = filepath.Join(f.dir, p)
+		}
+		if matches, _ := filepath.Glob(full); len(matches) == 0 && !strings.HasPrefix(full, "~") {
+			return nil, fmt.Errorf("--path %s: nothing there", p)
+		}
+	}
 	path := f.lockfile
 	if path == "" {
 		path = filepath.Join(f.dir, skills.DefaultLockfile)
+	}
+	absLock, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
 	}
 	lock, err := skills.LoadLockfile(path)
 	if err != nil {
@@ -89,7 +106,7 @@ func (f *skillFlags) open(cmd *cobra.Command) (*session, error) {
 	paths := append(append([]string{}, lock.Paths...), f.paths...)
 	lock.Paths = dedupeStrings(paths)
 	lock.User = lock.User || f.user
-	found, err := skills.Discover(skills.Options{Dir: f.dir, Paths: lock.Paths, User: lock.User})
+	found, err := skills.Discover(skills.Options{Dir: f.dir, Paths: lock.Paths, User: lock.User, Exclude: absLock})
 	if err != nil {
 		return nil, err
 	}
@@ -103,15 +120,23 @@ func (s *session) pick(names []string) ([]skills.Report, error) {
 	}
 	var out []skills.Report
 	for _, n := range names {
-		found := false
+		var found []skills.Report
 		for _, r := range s.reports {
 			if r.Match(n) {
-				out = append(out, r)
-				found = true
+				found = append(found, r)
 			}
 		}
-		if !found {
+		switch len(found) {
+		case 0:
 			return nil, fmt.Errorf("no skill called %q; agentgate skills label lists them", n)
+		case 1:
+			out = append(out, found[0])
+		default:
+			keys := make([]string, len(found))
+			for i, r := range found {
+				keys[i] = skills.RevealLine(r.Key)
+			}
+			return nil, fmt.Errorf("%q could be any of %s; name it by its directory", n, strings.Join(keys, ", "))
 		}
 	}
 	return out, nil
@@ -161,7 +186,7 @@ agentgate skills approve.`,
 			if err != nil {
 				return err
 			}
-			var pinned []skills.Report
+			pinned := []skills.Report{}
 			for _, r := range s.reports {
 				if r.Status == skills.StatusNew {
 					s.lock.Approve(r, approver(by), time.Now())
@@ -177,7 +202,7 @@ agentgate skills approve.`,
 				return writeJSON(cmd.OutOrStdout(), pinned)
 			}
 			for _, r := range pinned {
-				fmt.Fprintf(s.w.out, "pinned %s  %s\n", skills.Reveal(r.Key), s.w.dim(labelText(r.Label)))
+				fmt.Fprintf(s.w.out, "pinned %s  %s\n", skills.RevealLine(r.Key), s.w.dim(labelText(r.Label)))
 				printFindings(s.w, r.Findings, "  ")
 			}
 			if len(pinned) > 0 {
@@ -195,9 +220,10 @@ agentgate skills approve.`,
 
 func newSkillsVerifyCmd() *cobra.Command {
 	var (
-		f        skillFlags
-		asJSON   bool
-		markdown bool
+		f         skillFlags
+		asJSON    bool
+		markdown  bool
+		missingOK bool
 	)
 	cmd := &cobra.Command{
 		Use:   "verify",
@@ -213,6 +239,9 @@ with the prose diff of every changed SKILL.md.`,
 			s, err := f.open(cmd)
 			if err != nil {
 				return err
+			}
+			if !s.lock.Exists() && !missingOK {
+				return fmt.Errorf("no lockfile at %s; pin the skills with agentgate skills lock, or pass --missing-ok", displayPath(s.lock.Path()))
 			}
 			switch {
 			case asJSON:
@@ -235,6 +264,7 @@ with the prose diff of every changed SKILL.md.`,
 	f.register(cmd)
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the reports as JSON")
 	cmd.Flags().BoolVar(&markdown, "markdown", false, "print the report as Markdown, for a pull request or a job summary")
+	cmd.Flags().BoolVar(&missingOK, "missing-ok", false, "without a lockfile, check the skills against an empty one instead of failing")
 	return cmd
 }
 
@@ -319,7 +349,7 @@ dropped from the lockfile.`,
 			for _, r := range picked {
 				if r.Clean() {
 					if !all {
-						fmt.Fprintf(s.w.out, "%s is already approved as it is\n", skills.Reveal(r.Key))
+						fmt.Fprintf(s.w.out, "%s is already approved as it is\n", skills.RevealLine(r.Key))
 					}
 					continue
 				}
@@ -327,13 +357,13 @@ dropped from the lockfile.`,
 				n++
 				switch r.Status {
 				case skills.StatusRemoved:
-					fmt.Fprintf(s.w.out, "dropped %s %s\n", skills.Reveal(r.Key), s.w.dim("(removed from disk)"))
+					fmt.Fprintf(s.w.out, "dropped %s %s\n", skills.RevealLine(r.Key), s.w.dim("(removed from disk)"))
 				default:
 					note := labelText(r.Label)
 					if k := len(r.Findings); k > 0 {
 						note += fmt.Sprintf("; %d finding(s) accepted", k)
 					}
-					fmt.Fprintf(s.w.out, "approved %s %s  %s\n", skills.Reveal(r.Key), s.w.dim("(was "+string(r.Status)+")"), s.w.dim(note))
+					fmt.Fprintf(s.w.out, "approved %s %s  %s\n", skills.RevealLine(r.Key), s.w.dim("(was "+string(r.Status)+")"), s.w.dim(note))
 				}
 			}
 			if n == 0 {
@@ -568,7 +598,7 @@ func printSkillTable(w *lineWriter, lock *skills.Lockfile, reports []skills.Repo
 		if len(r.Gained) > 0 && r.Status != skills.StatusNew {
 			label += " (+" + strings.Join(r.Gained, ", +") + ")"
 		}
-		t.row(truncate(skills.Reveal(r.Key), 48), r.Status, truncate(label, 60), findings)
+		t.row(truncate(skills.RevealLine(r.Key), 48), r.Status, truncate(label, 60), findings)
 	}
 	t.flush()
 }
@@ -589,7 +619,7 @@ func printVerify(s *session) {
 		return
 	}
 	for _, r := range pending {
-		fmt.Fprintf(w.out, "\n%s  %s\n", skills.Reveal(r.Key), w.status(r.Status))
+		fmt.Fprintf(w.out, "\n%s  %s\n", skills.RevealLine(r.Key), w.status(r.Status))
 		printSummary(w, r)
 	}
 	fmt.Fprintf(w.out, "\n%s\n", w.dim("Read what changed with agentgate skills diff, then accept it with agentgate skills approve <skill> (or --all)."))
@@ -609,7 +639,7 @@ func printSummary(w *lineWriter, r skills.Report) {
 	}
 	if r.Status != skills.StatusNew {
 		for _, f := range r.Files {
-			fmt.Fprintf(w.out, "  %-8s  %s\n", f.Change, skills.Reveal(f.Path))
+			fmt.Fprintf(w.out, "  %-8s  %s\n", f.Change, skills.RevealLine(f.Path))
 		}
 	}
 	for _, c := range r.Gained {
@@ -619,13 +649,13 @@ func printSummary(w *lineWriter, r skills.Report) {
 		fmt.Fprintf(w.out, "  %s %s\n", w.dim("- capability"), c)
 	}
 	for _, h := range r.NewHosts {
-		fmt.Fprintf(w.out, "  %s %s\n", w.paint(colourYellow, "+ host"), skills.Reveal(h))
+		fmt.Fprintf(w.out, "  %s %s\n", w.paint(colourYellow, "+ host"), skills.RevealLine(h))
 	}
 	printFindings(w, r.Unaccepted, "  ")
 }
 
 func printDetails(w *lineWriter, r skills.Report) {
-	fmt.Fprintf(w.out, "%s  %s\n", skills.Reveal(r.Key), w.status(r.Status))
+	fmt.Fprintf(w.out, "%s  %s\n", skills.RevealLine(r.Key), w.status(r.Status))
 	printSummary(w, r)
 	if r.Skill == nil {
 		return
@@ -644,7 +674,7 @@ func printDetails(w *lineWriter, r skills.Report) {
 			fmt.Fprintf(w.out, "  %s\n", w.dim("  …"))
 			continue
 		}
-		text := w.revealed(skills.Reveal(l.Text))
+		text := w.revealed(skills.RevealLine(l.Text))
 		prefix := fmt.Sprintf("%s %4d  ", l.Op, l.Line)
 		if l.Op == "=" {
 			prefix = fmt.Sprintf("  %4d  ", l.Line)
@@ -675,7 +705,7 @@ func printDetails(w *lineWriter, r skills.Report) {
 }
 
 func printLabel(w *lineWriter, key string, l skills.Label) {
-	fmt.Fprintf(w.out, "%s  %s\n", skills.Reveal(key), w.dim(labelText(l.Capabilities)))
+	fmt.Fprintf(w.out, "%s  %s\n", skills.RevealLine(key), w.dim(labelText(l.Capabilities)))
 	for _, c := range l.Capabilities {
 		shown := 0
 		for _, e := range l.Evidence {
@@ -686,7 +716,7 @@ func printLabel(w *lineWriter, key string, l skills.Label) {
 				fmt.Fprintf(w.out, "  %-18s %s\n", w.paint(colourCyan, fmt.Sprintf("%-18s", c)), skills.CapabilityTitle(c))
 			}
 			if shown < 3 {
-				fmt.Fprintf(w.out, "  %-18s %s %s\n", "", w.dim(e.Where()), w.revealed(truncate(skills.Reveal(e.Excerpt), 80)))
+				fmt.Fprintf(w.out, "  %-18s %s %s\n", "", w.dim(skills.RevealLine(e.Where())), w.revealed(truncate(skills.RevealLine(e.Excerpt), 80)))
 			}
 			shown++
 		}
@@ -695,15 +725,15 @@ func printLabel(w *lineWriter, key string, l skills.Label) {
 		}
 	}
 	if len(l.Hosts) > 0 {
-		fmt.Fprintf(w.out, "  %-18s %s\n", "hosts", skills.Reveal(strings.Join(l.Hosts, ", ")))
+		fmt.Fprintf(w.out, "  %-18s %s\n", "hosts", skills.RevealLine(strings.Join(l.Hosts, ", ")))
 	}
 }
 
 func printFindings(w *lineWriter, fs []skills.Finding, indent string) {
 	for _, f := range fs {
-		fmt.Fprintf(w.out, "%s%s %s  %s: %s\n", indent, w.severity(f.Severity), f.Rule, f.Where(), skills.Reveal(f.Detail))
+		fmt.Fprintf(w.out, "%s%s %s  %s: %s\n", indent, w.severity(f.Severity), f.Rule, skills.RevealLine(f.Where()), skills.RevealLine(f.Detail))
 		if f.Excerpt != "" {
-			fmt.Fprintf(w.out, "%s       %s\n", indent, w.revealed(fmt.Sprintf("%q", skills.Reveal(truncate(f.Excerpt, 160)))))
+			fmt.Fprintf(w.out, "%s       %s\n", indent, w.revealed(fmt.Sprintf("%q", skills.RevealLine(truncate(f.Excerpt, 160)))))
 		}
 	}
 }
