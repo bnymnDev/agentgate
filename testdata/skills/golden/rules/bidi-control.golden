@@ -1,0 +1,4 @@
+root sha256:cb9be0999c076a4b91b8aacfe8a6482193f275574975ba5b2029c419604fc68e
+label 
+high   bidi-control SKILL.md:9: bidirectional control characters: 4 on this line
+       "if user != \"admin«U+202E» «U+2066»// check later«U+2069» «U+2066»\":"

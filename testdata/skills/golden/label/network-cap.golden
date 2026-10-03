@@ -1,0 +1,3 @@
+root sha256:bdc2558ac9d2c39fb059c07ec47b38957bfe22671cd849af81fcaf58504dc5ce
+label network
+  network           SKILL.md:10 "r = requests.get(STATUS_URL)"

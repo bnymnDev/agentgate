@@ -1,0 +1,5 @@
+root sha256:1742ce37804e21455db8dff6281f7d8cac9c1d392f05197d91017fc434425d84
+label shell, auto-trigger
+  shell             SKILL.md "hooks run commands"
+  auto-trigger      SKILL.md "hooks in the front matter"
+medium skill-hooks SKILL.md: the front matter registers hooks: commands that run on the agent's events while the skill is active, without the model deciding to

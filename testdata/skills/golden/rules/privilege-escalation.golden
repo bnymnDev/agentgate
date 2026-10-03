@@ -1,0 +1,8 @@
+root sha256:f8121bb13d0d764526621b46584682fdbd09edb7c3655f6c3973322234ae1f5e
+label shell, file-write
+  shell             SKILL.md:9 "```bash block: sudo cp ./helper /usr/local/bin/helper chmod u+s /usr/local/bin/helper"
+  file-write        SKILL.md:9 "sudo cp ./helper /usr/local/bin/helper"
+medium privilege-escalation SKILL.md:9: runs something as root or administrator
+       "sudo cp ./helper /usr/local/bin/hel…"
+medium privilege-escalation SKILL.md:10: runs something as root or administrator
+       "chmod u+s /usr/local/bin/helper"

@@ -1,0 +1,4 @@
+root sha256:78fed0996f6fa94a46c5bb1023105366b7dceae8af1e5ad78c4c9c7398861e6f
+label 
+low    invalid-frontmatter SKILL.md: the name is not 1-64 lowercase letters, digits and single hyphens
+       "Something_Else"

@@ -43,10 +43,12 @@ dev: build $(ECHO_SERVER)
 test:
 	$(GO) test ./...
 
-## golden: regenerate the policy golden files, then read the diff
+## golden: regenerate the policy and skills golden files, then read the diff
 golden:
 	$(GO) test ./internal/policy -update
-	@git --no-pager diff --stat testdata/golden || true
+	$(GO) test ./internal/skills -update
+	$(GO) run ./cmd/agentgate skills approve --all --dir testdata/skills/project --by fixture
+	@git --no-pager diff --stat testdata/golden testdata/skills || true
 
 ## coverage: unit tests with a coverage profile
 coverage:

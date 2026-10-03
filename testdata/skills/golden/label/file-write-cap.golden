@@ -1,0 +1,4 @@
+root sha256:c3be43c7e1601b9a832a252c4c72d0800fd7832f682803e73593b6fc05061a70
+label shell, file-write
+  shell             SKILL.md:9 "```bash block: cp ./helper ~/bin/helper"
+  file-write        SKILL.md:9 "cp ./helper ~/bin/helper"

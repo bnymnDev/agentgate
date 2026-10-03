@@ -1,0 +1,4 @@
+root sha256:18dc2d8615e45eecad6b864d218fcdbbdd6e7c572f028304585e72ec75cb3d9a
+label urls
+  urls              SKILL.md:16 "keepachangelog.com"
+hosts keepachangelog.com

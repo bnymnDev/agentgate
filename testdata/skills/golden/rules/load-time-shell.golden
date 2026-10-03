@@ -1,0 +1,9 @@
+root sha256:ad6408f8142b299a6a9f99716da8acdf7d257147c316a57ca2269bea06c96edf
+label shell, network
+  shell             SKILL.md:8 "runs as the skill loads: gh pr diff"
+  shell             SKILL.md:11 "runs as the skill loads: git status --short"
+  network           SKILL.md:8 "gh pr diff"
+medium load-time-shell SKILL.md:8: a shell command Claude Code runs when the skill is loaded
+       "gh pr diff"
+medium load-time-shell SKILL.md:11: a shell command Claude Code runs when the skill is loaded
+       "git status --short"

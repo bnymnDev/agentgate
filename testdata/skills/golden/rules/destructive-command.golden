@@ -1,0 +1,9 @@
+root sha256:299b646b19139e82b6f24659f32559e4b2bc7668fb1125bf21113f0be35366ef
+label shell, network, file-write
+  shell             SKILL.md:9 "```bash block: rm -rf ~/ git push --force origin main"
+  network           SKILL.md:10 "git push --force origin main"
+  file-write        SKILL.md:9 "rm -rf ~/"
+medium destructive-command SKILL.md:9: a command that destroys data beyond the project
+       "rm -rf ~/ git push --force origin main"
+medium destructive-command SKILL.md:10: a command that destroys data beyond the project
+       "git push --force origin main"

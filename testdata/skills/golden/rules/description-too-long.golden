@@ -1,0 +1,3 @@
+root sha256:562d5948ed9075f7655472324b92beb872cf44ec0e1cd20080d962f8a6bb915b
+label 
+low    description-too-long SKILL.md: the description is 1324 characters long; the Agent Skills specification allows 1024, and every one of them is in the model's context in every session

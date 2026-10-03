@@ -127,6 +127,9 @@ jobs:
 | `lint` | `fail` | `fail`, `warn` or `off`: what a lint warning does. |
 | `tests` | `auto` | The [policy tests](policies.md#testing-a-policy) to run: `auto` runs the file next to the config if there is one, `off` none; anything else names a test file. |
 | `binary` | *(none)* | Use this binary instead of downloading one. |
+| `skills` | *(none)* | A project directory whose [Agent Skills](skills.md) to verify against its `skills.lock`. The report goes to the job summary and to the `skills-report` output. |
+| `skills-lockfile` | *(none)* | The skills lockfile, if it is not `skills.lock` in that directory. |
+| `skills-fail` | `true` | Whether a skill change nobody approved fails the step. |
 
 | `bnymnDev/agentgate/report` input | Default | |
 |---|---|---|
@@ -138,7 +141,8 @@ jobs:
 The same checks work in any CI: `agentgate test` exits 1 when a policy test
 fails, `agentgate stats --fail-on '…'` when a threshold is crossed,
 `agentgate verify` on a broken chain, and `agentgate lock --check` when a
-server changed a tool since the lockfile was committed.
+server changed a tool since the lockfile was committed, and
+`agentgate skills verify` when a skill changed since `skills.lock` was.
 
 ## Containers
 
