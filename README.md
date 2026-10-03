@@ -537,7 +537,10 @@ insist).
 
 Next: approvals answered straight from a Slack message, and shared lockfiles
 for popular servers, so a definition can be checked against what everyone
-else pinned.
+else pinned. For skills: signed approvals, a `SessionStart` hook that runs
+`skills verify` before the agent loads anything, and SARIF output for code
+scanning — the full list is in the
+[skills design notes](docs/design/skills-lock.md#roadmap).
 
 ## License
 
