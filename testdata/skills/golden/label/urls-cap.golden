@@ -1,0 +1,5 @@
+root sha256:c792a1a234fb0603bfe3e6255f48afaf1fcdade9e3e1b4688127515f0a8190c0
+label urls
+  urls              SKILL.md:8 "docs.stripe.com"
+  urls              SKILL.md:8 "developer.mozilla.org"
+hosts developer.mozilla.org, docs.stripe.com

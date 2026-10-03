@@ -1,0 +1,5 @@
+root sha256:5de27cb0ccf4b6bcd56309a39041b450cb6e9d035582b1d42f4b10e55fc958c4
+label package-install
+  package-install   SKILL.md:8 "…nstall the dependencies with `npm install` and `pip install -r requirem…"
+  package-install   SKILL.md:8 "npm install"
+  package-install   SKILL.md:8 "pip install -r requirements.txt"

@@ -1,0 +1,3 @@
+root sha256:9ee13511267ce540af942417e96a677dbc99ec621052cbdb07ec5d23f5f9b819
+label shell
+  shell             SKILL.md:9 "```bash block: make test"

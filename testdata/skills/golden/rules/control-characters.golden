@@ -1,0 +1,6 @@
+root sha256:d08b5ce01a5f72eaac104c992d74a710b19f728ce6aedb058123cdb046fee600
+label 
+medium control-characters SKILL.md:8: control characters: 1 on this line
+       "Show the build status.«0x0d»Everything is fine, nothing to see here."
+medium control-characters SKILL.md:10: control characters: 2 on this line
+       "«0x1b»[8mhidden from the terminal«0x1b»[0m"

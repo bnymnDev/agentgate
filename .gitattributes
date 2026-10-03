@@ -11,3 +11,6 @@
 *.css text eol=lf
 *.js text eol=lf
 Makefile text eol=lf
+# Skill fixtures carry stray carriage returns and invisible characters on
+# purpose; check them out exactly as committed.
+testdata/skills/** -text

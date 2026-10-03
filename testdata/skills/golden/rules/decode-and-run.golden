@@ -1,0 +1,9 @@
+root sha256:2ab86d14ab3e343bbdc81e2d398b33c5cbc78b20715523f8512ce080cf3914c3
+label shell
+  shell             SKILL.md:9 "```bash block: echo ZWNobyBoaQo= | base64 -d | bash"
+high   decode-and-run SKILL.md:9: decodes something and runs the result
+       "echo ZWNobyBoaQo= | base64 -d | bash"
+high   decode-and-run SKILL.md:13: decodes something and runs the result
+       "exec(base64.b64decode(blob))"
+medium dynamic-eval SKILL.md:13: evaluates code built at run time
+       "exec(base64.b64decode(blob))"

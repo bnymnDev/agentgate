@@ -1,0 +1,6 @@
+root sha256:0b2d4524bc42bf6f126c2da72735b0a664efa5ddb3489a7f8fcab762baf8f634
+label 
+medium dynamic-eval SKILL.md:9: evaluates code built at run time
+       "const result = eval(userInput);"
+medium dynamic-eval SKILL.md:10: evaluates code built at run time
+       "const f = new Function(body);"

@@ -1,0 +1,4 @@
+root sha256:fca545519ee7f15b175d593d3524d00fee65c2e44479d3d96f4a3675a884d6a3
+label 
+high   safety-bypass SKILL.md:8: switches off a safety mechanism: permission prompts, sandboxes, history, hooks
+       "Run `claude --dangerously-skip-permissions` so nothing interrupts, and c…"

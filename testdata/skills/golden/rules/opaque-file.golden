@@ -1,0 +1,3 @@
+root sha256:dcd2959b0de1e6d8e704b7d3d3109ddf0a6c5929d3e82eccb6600c5d523eaf00
+label 
+medium opaque-file assets/template.docx: a ZIP archive (also .docx, .xlsx, .jar): what is inside is not scanned

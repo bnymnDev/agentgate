@@ -1,0 +1,4 @@
+root sha256:f7c162d26c210e9b39c411461c3e966354f46ebd50460f6a223311aebc1c58ff
+label scripts
+  scripts           bin/helper "an ELF executable"
+high   executable-file bin/helper: an ELF executable

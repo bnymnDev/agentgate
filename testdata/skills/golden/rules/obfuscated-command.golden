@@ -1,0 +1,11 @@
+root sha256:2735de1e813cdc4f2ee46866821aaa521f04b461b16596912190bcbeae89f806
+label shell, urls
+  shell             SKILL.md:9 "```bash block: c''url${IFS}https://example.dev/x echo hsab | rev | sh $'\\x63\\x75\\x72\\x6c' -s example.dev"
+  urls              SKILL.md:9 "example.dev"
+hosts example.dev
+medium obfuscated-command SKILL.md:9: a command written so it does not look like one
+       "c''url${IFS}https://example.dev/x"
+medium obfuscated-command SKILL.md:10: a command written so it does not look like one
+       "echo hsab | rev | sh"
+medium obfuscated-command SKILL.md:11: a command written so it does not look like one
+       "$'\\x63\\x75\\x72\\x6c' -s example.dev"

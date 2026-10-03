@@ -1,0 +1,9 @@
+root sha256:ce8c06892c6704d0536f78cf434e45d748ea7613f13b7f97ed976fd825c18aae
+label urls
+  urls              SKILL.md:8 "g«u+0456»thub.com"
+  urls              SKILL.md:8 "xn--pple-43d.com"
+hosts g«u+0456»thub.com, xn--pple-43d.com
+high   confusable-url SKILL.md:8: a URL whose host is spelled with non-ASCII look-alikes or punycode
+       "https://gіthub.com  (host g«U+0456»thub.com)"
+medium mixed-script SKILL.md:8: a word that mixes Latin letters with Cyrillic, Greek or Armenian look-alikes
+       "g«U+0456»thub"

@@ -7,6 +7,27 @@ list are on the [releases page](https://github.com/bnymnDev/agentgate/releases).
 
 ## [Unreleased]
 
+### Added
+
+- `agentgate skills`: a lockfile for Agent Skills. `skills.lock` pins every
+  file of every skill in `.claude/skills`, `.agents/skills` and
+  `.codex/skills` — and with `--user` in the home directory and Claude Code
+  plugins, with `--path` anywhere — by an RFC 6962-shaped Merkle root, with a
+  label of what each skill can do (shell, scripts, network, urls, secrets,
+  writes outside the project, package installs, remote content, auto-trigger,
+  pre-approved tools) and the findings a human approved. `lock` pins new
+  skills, `verify` exits 1 on any change, new capability or new finding
+  nobody approved, `diff` shows a changed `SKILL.md` sentence by sentence with
+  new imperatives and hidden text marked, `approve` accepts a skill as it is,
+  `label` shows what a skill can do and writes a badge, and `scan` vets a
+  skill before it is installed. 42 deterministic rules, among them Unicode
+  tag, bidi, zero-width and variation-selector tricks, look-alike hosts,
+  encoded payloads, `curl | sh`, conditional triggers, exfiltration,
+  persistence and load-time shell commands. No network, no model.
+- The GitHub Action takes `skills`, `skills-lockfile` and `skills-fail`: it
+  verifies a project's skills, writes the report to the job summary and hands
+  it out as the `skills-report` output for a pull request comment.
+
 ### Fixed
 
 - The GitHub Action skips `policy lint` and `test`, with a notice, when it

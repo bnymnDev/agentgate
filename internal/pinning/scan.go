@@ -216,7 +216,7 @@ func scanText(t textAt, shadow *shadowMatcher, definition bool) []Finding {
 	if f, ok := invisibleFinding(t, definition); ok {
 		out = append(out, f)
 	}
-	visible := visibleText(t.text)
+	visible := VisibleText(t.text)
 	for _, p := range instructionPatterns {
 		if !definition && !p.forResults {
 			continue
@@ -344,10 +344,10 @@ func isBidi(r rune) bool {
 	return (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069)
 }
 
-// visibleText is what a pattern should look at: hidden characters are taken
+// VisibleText is what a pattern should look at: hidden characters are taken
 // out, so they cannot be used to split a phrase, and hidden tag text is
 // spelled out, so what it says is checked too.
-func visibleText(s string) string {
+func VisibleText(s string) string {
 	var b strings.Builder
 	for _, r := range s {
 		switch {

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "skills": {
+    ".agents/skills/changelog": {
+      "name": "changelog",
+      "description": "Add an entry to CHANGELOG.md under Unreleased. Use when the user asks to record a change in the changelog.",
+      "root": "sha256:1d569f80c0ea7ce4121a8a20c80b510c302a3e2d19d19a5ab94a6780d97a1437",
+      "files": {
+        "SKILL.md": "sha256:90459af7f3fb17ea0d659683af089fc4de9d87bda2cd3808b96f4f1ebe73759c"
+      },
+      "label": [
+        "urls"
+      ],
+      "hosts": [
+        "keepachangelog.com"
+      ],
+      "instructions": "---\nname: changelog\ndescription: Add an entry to CHANGELOG.md under Unreleased. Use when the user asks to record a change in the changelog.\n---\n\n# Changelog\n\nAdd the entry under `## [Unreleased]`, in the section that fits: Added, Changed, Fixed or Removed.\nWrite it for the people who use the project, not for the people who wrote it.\nSee https://keepachangelog.com/en/1.1.0/ for the format.\n",
+      "approved_at": "2026-10-02T05:45:04Z",
+      "approved_by": "fixture"
+    },
+    ".claude/skills/notes": {
+      "name": "notes",
+      "description": "Keep meeting notes in notes/ as dated Markdown files. Use when the user asks to take, find or summarise notes.",
+      "root": "sha256:493d309f928c62e10d9a8c8204a4929acb1e6d341218dc902df216c1af97dfa1",
+      "files": {
+        "SKILL.md": "sha256:fd5b071e02c423a8533376fc285615df2c811a88c6a409f277b3eada6b6637c7",
+        "scripts/find.sh": "sha256:08d32ba308041185542832cc046c60e378985d381287866ae735c4078a334570"
+      },
+      "label": [
+        "shell",
+        "scripts"
+      ],
+      "instructions": "---\nname: notes\ndescription: Keep meeting notes in notes/ as dated Markdown files. Use when the user asks to take, find or summarise notes.\n---\n\n# Notes\n\nNotes live in `notes/`, one file per meeting, named `YYYY-MM-DD-topic.md`.\n\n- To take notes, create the file and write the agenda, the decisions and the follow-ups as three sections.\n- To find notes, run `scripts/find.sh <word>` and show the matching lines.\n- To summarise, read the files the user names and list the decisions first.\n\nKeep the user's wording for decisions; do not paraphrase them.\n",
+      "approved_at": "2026-10-02T05:45:04Z",
+      "approved_by": "fixture"
+    }
+  }
+}
