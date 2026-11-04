@@ -299,7 +299,10 @@ func (p *Proxy) onSampling(u *upstream) func(context.Context, *mcp.CreateMessage
 			rec.IsError, rec.Error = true, err.Error()
 		}
 		rec.DurationMS = time.Since(started).Milliseconds()
-		rec.Labels = st.forwarded(&policy.Call{Tool: rec.Tool, Upstream: u.name()}, audit.TokensEst(raw, rec.Result), started, labels)
+		pc, tokens := &policy.Call{Tool: rec.Tool, Upstream: u.name()}, audit.TokensEst(raw, rec.Result)
+		cost := p.Config().Policy.Budget.Money.Cost(pc, tokens)
+		p.spent(cost)
+		rec.Labels = st.forwarded(pc, tokens, cost, started, labels)
 		p.record(st, rec)
 		return res, err
 	}
@@ -336,7 +339,10 @@ func (p *Proxy) onElicitation(u *upstream) func(context.Context, *mcp.ElicitRequ
 			rec.IsError, rec.Error = true, err.Error()
 		}
 		rec.DurationMS = time.Since(started).Milliseconds()
-		rec.Labels = st.forwarded(&policy.Call{Tool: rec.Tool, Upstream: u.name()}, audit.TokensEst(raw, rec.Result), started, labels)
+		pc, tokens := &policy.Call{Tool: rec.Tool, Upstream: u.name()}, audit.TokensEst(raw, rec.Result)
+		cost := p.Config().Policy.Budget.Money.Cost(pc, tokens)
+		p.spent(cost)
+		rec.Labels = st.forwarded(pc, tokens, cost, started, labels)
 		p.record(st, rec)
 		return res, err
 	}

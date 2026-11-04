@@ -24,6 +24,7 @@ type Tracker struct {
 	lastSig string
 	streak  int
 	tokens  int
+	spent   float64
 	labels  []string
 	called  []string
 	seen    map[string]bool
@@ -56,6 +57,7 @@ func (t *Tracker) Observe(tool, sig string, now time.Time) Counts {
 		LastMinute: len(t.recent),
 		Repeats:    repeats,
 		Tokens:     t.tokens,
+		Spent:      t.spent,
 	}
 }
 
@@ -79,6 +81,12 @@ func (t *Tracker) Forwarded(call *Call, tokens int, now time.Time) {
 		}
 	}
 }
+
+// Spend adds what a forwarded call cost to the session's spending.
+func (t *Tracker) Spend(amount float64) { t.spent += amount }
+
+// Spent is what the session has cost so far.
+func (t *Tracker) Spent() float64 { return t.spent }
 
 // Earn adds labels to the session and returns the ones it did not have yet.
 func (t *Tracker) Earn(labels ...string) []string {

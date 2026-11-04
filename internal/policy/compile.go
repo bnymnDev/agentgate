@@ -54,6 +54,9 @@ func (p *Policy) Compile() error {
 	if p.Budget.TokensPerSession < 0 {
 		errs = append(errs, errors.New("policy.budget.tokens_per_session: must not be negative"))
 	}
+	if err := p.Budget.Money.compile(); err != nil {
+		errs = append(errs, err)
+	}
 	if p.LoopGuard.Repeats < 0 {
 		errs = append(errs, errors.New("policy.loop_guard.repeats: must not be negative"))
 	}

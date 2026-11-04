@@ -175,6 +175,8 @@ type Budget struct {
 	// TokensPerSession caps the estimated tokens (arguments plus results)
 	// a session may push through its tools. Zero means unlimited.
 	TokensPerSession int `yaml:"tokens_per_session" json:"tokens_per_session,omitempty"`
+	// Money caps spending in a currency; see Money.
+	Money Money `yaml:"money" json:"money,omitzero"`
 }
 
 // LoopGuard stops an agent that is stuck repeating itself.
@@ -317,6 +319,11 @@ type Counts struct {
 	Repeats int `json:"repeats,omitempty"`
 	// Tokens is the estimated number of tokens spent so far.
 	Tokens int `json:"tokens,omitempty"`
+	// Spent is what the session's calls have cost so far, in the money
+	// budget's currency.
+	Spent float64 `json:"spent,omitempty"`
+	// SpentToday is what every session has spent since local midnight.
+	SpentToday float64 `json:"spent_today,omitempty"`
 }
 
 // Annotations mirror the MCP tool annotations. A nil field means the server
@@ -433,7 +440,7 @@ func checkBudget(b *Budget, call *Call) (Decision, bool) {
 		}
 		break
 	}
-	return Decision{}, false
+	return checkMoney(&b.Money, call)
 }
 
 // matches reports whether the rule applies to call. A rule with neither tool

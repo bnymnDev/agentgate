@@ -122,7 +122,7 @@ func Lint(p *Policy, ctx LintContext) []LintFinding {
 		add(SeverityWarn, "", "ask-without-approvals", "%d rule(s) ask, but approval.mode is deny: every ask is a deny", asks)
 	}
 	b := p.Budget
-	noBudget := b.CallsPerSession == 0 && b.CallsPerMinute == 0 && b.TokensPerSession == 0 && len(b.CallsPerTool) == 0
+	noBudget := b.CallsPerSession == 0 && b.CallsPerMinute == 0 && b.TokensPerSession == 0 && len(b.CallsPerTool) == 0 && b.Money.PerSession == 0 && b.Money.PerDay == 0
 	if p.Default == ActionAllow && blocks == 0 && noBudget && p.LoopGuard.Repeats == 0 {
 		add(SeverityInfo, "", "nothing-blocks", "default allow, no rule denies or asks and there is no budget: the policy only records. Try the baseline pack")
 	}
