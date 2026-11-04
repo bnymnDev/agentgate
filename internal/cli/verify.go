@@ -3,16 +3,20 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	anchorpkg "github.com/bnymnDev/agentgate/internal/anchor"
 	"github.com/bnymnDev/agentgate/internal/audit"
 )
 
 func newVerifyCmd(g *globals) *cobra.Command {
 	var (
 		anchor    string
+		anchors   []string
 		asJSON    bool
 		missingOK bool
 	)
@@ -32,6 +36,10 @@ ticket, a commit, a chat message) and pass it back later:
 	agentgate verify --anchor 1234:9f86d081884c7d65...
 
 which also proves that nothing up to that call has been touched since.
+agentgate anchor and audit.anchor send heads out on their own; check every
+one they left with --anchors, given a file or an ots: directory:
+
+	agentgate verify --anchors ./anchors.jsonl --anchors ./anchors
 
 Exits 1 when the chain is broken, so it can run in CI or from cron.`,
 		Args: cobra.NoArgs,
@@ -40,16 +48,26 @@ Exits 1 when the chain is broken, so it can run in CI or from cron.`,
 			if err != nil {
 				return err
 			}
-			var expect *audit.Link
+			var expect []audit.Link
 			if anchor != "" {
 				l, err := audit.ParseLink(anchor)
 				if err != nil {
 					return err
 				}
-				expect = &l
+				expect = append(expect, l)
+			}
+			for _, a := range anchors {
+				got, err := readAnchors(a)
+				if err != nil {
+					return err
+				}
+				if len(got) == 0 {
+					return fmt.Errorf("%s holds no anchors", a)
+				}
+				expect = append(expect, got...)
 			}
 			store, err := g.openStore(cmd.Context(), cfg)
-			if errors.Is(err, errNoAuditLog) && missingOK && expect == nil {
+			if errors.Is(err, errNoAuditLog) && missingOK && len(expect) == 0 {
 				fmt.Fprintf(cmd.OutOrStdout(), "no audit database at %s yet; nothing to verify\n", cfg.Audit.Path)
 				return nil
 			}
@@ -58,7 +76,7 @@ Exits 1 when the chain is broken, so it can run in CI or from cron.`,
 			}
 			defer closeStore(store)
 
-			report, err := store.Verify(cmd.Context(), expect)
+			report, err := store.VerifyAnchors(cmd.Context(), expect)
 			if err != nil {
 				return err
 			}
@@ -85,13 +103,20 @@ Exits 1 when the chain is broken, so it can run in CI or from cron.`,
 				if report.Head.Seq > 0 {
 					fmt.Fprintf(out, "%-8s %s\n", "head", report.Head)
 				}
-				if expect != nil && report.AnchorChecked {
-					fmt.Fprintf(out, "%-8s %s is still part of the chain\n", "anchor", expect)
+				switch {
+				case len(expect) == 1 && report.AnchorChecked:
+					fmt.Fprintf(out, "%-8s %s is still part of the chain\n", "anchor", expect[0])
+				case len(expect) > 1:
+					fmt.Fprintf(out, "%-8s %d of %d are still part of the chain", "anchors", report.AnchorsChecked, len(expect))
+					if report.Pruned > 0 {
+						fmt.Fprintf(out, ", %d are older than the retention cut", report.Pruned)
+					}
+					fmt.Fprintln(out)
 				}
 				fmt.Fprintln(out)
 				if report.OK() {
 					fmt.Fprintln(out, "OK: no recorded call has been changed, removed or reordered.")
-					if report.Head.Seq > 0 && expect == nil {
+					if report.Head.Seq > 0 && len(expect) == 0 {
 						fmt.Fprintln(out, "Keep the head somewhere else and pass it to --anchor next time to also catch a cut-off end.")
 					}
 				} else {
@@ -112,7 +137,21 @@ Exits 1 when the chain is broken, so it can run in CI or from cron.`,
 		},
 	}
 	cmd.Flags().StringVar(&anchor, "anchor", "", "a head printed by an earlier verify, as seq:hash, that must still be in the chain")
+	cmd.Flags().StringArrayVar(&anchors, "anchors", nil, "a file of anchors, or an ots: directory, every one of which must still be in the chain; repeatable")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the report as JSON")
 	cmd.Flags().BoolVar(&missingOK, "missing-ok", false, "succeed when there is no audit database yet, instead of failing")
 	return cmd
+}
+
+// readAnchors loads the anchors a file or an ots: directory holds.
+func readAnchors(path string) ([]audit.Link, error) {
+	path = strings.TrimPrefix(strings.TrimPrefix(strings.TrimPrefix(path, "file:"), "ots:"), "opentimestamps:")
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return anchorpkg.ReadDir(path)
+	}
+	return anchorpkg.Read(path)
 }

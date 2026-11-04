@@ -88,6 +88,11 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 		}()
 	}
 
+	if store != nil && len(cfg.Audit.Anchor.To) > 0 {
+		go anchorLoop(ctx, cfg, store, log)
+		log.Info("audit chain is anchored", "to", strings.Join(cfg.Audit.Anchor.To, ", "), "every", time.Duration(cfg.Audit.Anchor.Every).String())
+	}
+
 	exporter, err := telemetry.New(cfg.Telemetry.OTLP, version(), log)
 	if err != nil {
 		return err

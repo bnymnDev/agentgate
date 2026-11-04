@@ -46,6 +46,9 @@ type Store struct {
 	closing chan struct{}
 	once    sync.Once
 	dropped atomic.Int64
+
+	hookMu      sync.Mutex
+	beforeClose []func(context.Context)
 }
 
 // Options configure a Store.
@@ -206,7 +209,25 @@ func (s *Store) Close(ctx context.Context) error {
 	if n := s.dropped.Load(); n > 0 {
 		s.log.Warn("audit records were dropped because the write queue was full", "dropped", n)
 	}
+	s.hookMu.Lock()
+	hooks := s.beforeClose
+	s.beforeClose = nil
+	s.hookMu.Unlock()
+	for _, fn := range hooks {
+		fn(ctx)
+	}
 	return s.db.Close()
+}
+
+// BeforeClose runs fn once every pending write is in, just before the
+// database closes, so it sees the final state of the log.
+func (s *Store) BeforeClose(fn func(context.Context)) {
+	if s == nil {
+		return
+	}
+	s.hookMu.Lock()
+	s.beforeClose = append(s.beforeClose, fn)
+	s.hookMu.Unlock()
 }
 
 // NewID returns a lexicographically sortable ULID, used for session and call

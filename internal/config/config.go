@@ -196,8 +196,58 @@ type Audit struct {
 	// MaxResultBytes caps how much of a result is stored. Larger results are
 	// truncated and flagged.
 	MaxResultBytes int `yaml:"max_result_bytes"`
+	// Anchor writes the head of the hash chain somewhere this machine cannot
+	// rewrite, so a cut-off end of the log shows too.
+	Anchor Anchor `yaml:"anchor"`
 
 	compiled []*regexp.Regexp
+}
+
+// Anchor sends the chain head out on a schedule while the gateway runs.
+type Anchor struct {
+	// To lists destinations: an https:// webhook (an ntfy topic URL works),
+	// ots:<dir> for an OpenTimestamps proof, or file:<path> (a bare path too)
+	// to append to a file.
+	To []string `yaml:"to"`
+	// Every is how often, when the chain has grown. It defaults to 1h; the
+	// last head is also sent when the gateway stops.
+	Every Duration `yaml:"every"`
+}
+
+// DefaultAnchorEvery is how often the chain head goes out.
+const DefaultAnchorEvery = time.Hour
+
+func (a *Anchor) normalize() error {
+	if len(a.To) == 0 {
+		return nil
+	}
+	if a.Every == 0 {
+		a.Every = Duration(DefaultAnchorEvery)
+	}
+	if time.Duration(a.Every) < time.Minute {
+		return errors.New("audit.anchor.every: at least 1m")
+	}
+	for i, to := range a.To {
+		to = strings.TrimSpace(to)
+		if to == "" {
+			return fmt.Errorf("audit.anchor.to[%d]: empty", i)
+		}
+		kind, rest, _ := strings.Cut(to, ":")
+		switch kind {
+		case "file", "ots", "opentimestamps":
+			if expanded, err := ExpandPath(rest); err == nil {
+				to = kind + ":" + expanded
+			}
+		case "http", "https":
+			to = ExpandEnv(to)
+		default:
+			if expanded, err := ExpandPath(to); err == nil {
+				to = expanded
+			}
+		}
+		a.To[i] = to
+	}
+	return nil
 }
 
 // Upstream is one real MCP server agentgate connects to.
@@ -419,6 +469,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, errors.New("audit.max_result_bytes: must not be negative"))
 	}
 	if err := c.Audit.compile(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Audit.Anchor.normalize(); err != nil {
 		errs = append(errs, err)
 	}
 
