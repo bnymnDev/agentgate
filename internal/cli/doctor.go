@@ -336,12 +336,30 @@ func doctorApprovals(ctx context.Context, cfg *config.Config, offline bool, add 
 			}
 		}
 	}
+	check := func(name string, probe func(context.Context) error) {
+		channels = append(channels, name)
+		if offline {
+			return
+		}
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := probe(probeCtx); err != nil {
+			add(levelWarn, "approvals", name+" cannot be reached: "+oneLine(err), "")
+		}
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	if t := cfg.Approval.Telegram; t != nil {
+		check("Telegram", (&proxy.TelegramApprover{Token: t.Token, API: t.API, Client: client}).Check)
+	}
+	if s := cfg.Approval.Slack; s != nil {
+		check("Slack", (&proxy.SlackApprover{BotToken: s.BotToken, API: s.API, Client: client}).Check)
+	}
 	mode := cfg.Approval.Mode
 	switch {
 	case mode == "deny":
 		add(levelInfo, "approvals", "mode deny: every ask is denied", "")
 	case len(channels) == 0:
-		add(levelWarn, "approvals", "mode "+mode+": no channel here to ask on besides the web UI (run with --ui)", "set approval.ntfy to approve on your phone")
+		add(levelWarn, "approvals", "mode "+mode+": no channel here to ask on besides the web UI (run with --ui)", "set approval.ntfy, approval.telegram or approval.slack")
 	default:
 		add(levelOK, "approvals", fmt.Sprintf("mode %s: %s, plus the web UI when it runs", mode, strings.Join(channels, ", ")), "")
 	}

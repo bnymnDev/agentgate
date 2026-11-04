@@ -3,6 +3,7 @@ module github.com/bnymnDev/agentgate
 go 1.26.0
 
 require (
+	github.com/coder/websocket v1.8.15
 	github.com/mattn/go-isatty v0.0.24
 	github.com/modelcontextprotocol/go-sdk v1.7.0
 	github.com/oklog/ulid/v2 v2.1.2
