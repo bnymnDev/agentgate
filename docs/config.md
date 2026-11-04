@@ -18,12 +18,21 @@ prefix_separator: "__"           # joins upstream name and tool name
 call_timeout: 120s               # per call, unless an upstream overrides it
 
 approval:
-  mode: auto                     # auto | tty | ui | ntfy | deny
+  mode: auto                     # auto | tty | ui | ntfy | telegram | slack | deny
   timeout: 60s                   # after this, an unanswered "ask" is denied
   ntfy:                          # optional: approve on your phone
     topic: agentgate-7f3a9c2e41b8d605
     server: https://ntfy.sh
     token: ${NTFY_TOKEN}
+  telegram:                      # optional: approve in a Telegram chat
+    token: ${TELEGRAM_BOT_TOKEN}
+    chat_id: -1001234567890
+    approvers: [123456789]
+  slack:                         # optional: approve in a Slack channel
+    bot_token: ${SLACK_BOT_TOKEN}   # xoxb-
+    app_token: ${SLACK_APP_TOKEN}   # xapp-, Socket Mode
+    channel: C0123456789
+    approvers: [U0123456789]
 
 audit:
   enabled: true
@@ -33,6 +42,9 @@ audit:
   builtin_redaction: true        # keep the built-in secret patterns
   redact:                        # your own patterns, added to the built-in ones
     - '(?i)(api[_-]?key|secret|token|password)\s*[:=]\s*\S+'
+  anchor:                        # send the chain head somewhere this machine cannot rewrite
+    to: ["https://ntfy.sh/my-anchors", "ots:~/.agentgate/anchors"]
+    every: 1h
 
 upstreams:
   - name: fs
@@ -71,6 +83,13 @@ pinning:
   mode: warn                     # warn | enforce | off
   scan: warn                     # warn | quarantine | off
   lockfile: agentgate.lock       # default: next to this file, same name
+  registry: ./mcp-registry       # optional: check first sights against trusted definitions
+
+taint:
+  mode: warn                     # off | warn | ask | deny
+  labels: [private-data]         # results of calls with these labels are private
+  tools: ["vault.*"]             # and results of these tools
+  min_length: 12
 
 canaries:
   action: freeze                 # deny | freeze
@@ -88,6 +107,8 @@ policy:
   mode: enforce                  # enforce | shadow
   redact_results: false
   strip_invisible: false
+  sampling: allow                # allow | ask | deny: a server asking the host's model
+  elicitation: allow             # allow | ask | deny: a server asking the user for input
   packs: [baseline, secrets, lethal-trifecta]
   labels: []                     # see docs/policies.md
   budget:
@@ -137,6 +158,8 @@ What happens to a call a rule marked `ask`.
 | `ui` | Wait for a click in the web UI. Denies if the UI is not running. |
 | `tty` | Prompt on agentgate's terminal. Denies if there is no terminal. |
 | `ntfy` | Ask on the phone only. |
+| `telegram` | Ask in the Telegram chat only. |
+| `slack` | Ask in the Slack channel only. |
 | `deny` | Never ask. Every `ask` becomes a deny with a reason that says so. |
 
 In stdio mode stdin and stdout carry MCP traffic, so agentgate opens the
@@ -152,6 +175,31 @@ approvals inbox, run in `--http` mode, or put the questions on your phone:
 | `token` | *(none)* | An access token for a server with access control. `${ENV}` is expanded. |
 
 See [guardrails.md](guardrails.md#approvals) for how an answer gets back.
+
+A Telegram bot or a Slack app asks with the same three buttons. Both read
+the presses over a connection agentgate opens itself — long polling for
+Telegram, Socket Mode for Slack — so nothing has to reach agentgate from
+outside, and both join the `auto` fanout when they are configured. Only a
+press in the configured chat or channel counts, by one of `approvers` when
+that is set, and each question carries a one-time nonce. Once answered, the
+buttons are replaced by the outcome everywhere.
+
+| `approval.telegram` | Default | What it does |
+|---|---|---|
+| `token` | required | The bot token from @BotFather. The bot must have no webhook set. |
+| `chat_id` | required | The chat the questions go to. |
+| `approvers` | anyone in the chat | User ids whose presses count. |
+| `api` | `https://api.telegram.org` | For a local Bot API server. |
+
+| `approval.slack` | Default | What it does |
+|---|---|---|
+| `bot_token` | required | `xoxb-…`, with `chat:write`. Posts and updates the question. |
+| `app_token` | required | `xapp-…`, with `connections:write`, on an app with Socket Mode and interactivity on. |
+| `channel` | required | The channel id the questions go to; the bot must be in it. |
+| `approvers` | anyone in the channel | User ids whose presses count. |
+| `api` | `https://slack.com/api` | |
+
+`agentgate doctor` checks both tokens.
 
 Every channel offers three answers:
 
@@ -175,6 +223,8 @@ covered, with the reason `approved earlier for the rest of this session`.
 | `max_result_bytes` | `262144` | Results larger than this are stored truncated and flagged. The hash is still of the whole result. |
 | `builtin_redaction` | `true` | Whether the built-in secret patterns apply. |
 | `redact` | *(empty)* | Your own regexes, added to the built-in ones. |
+| `anchor.to` | *(none)* | Where the chain head is sent while the gateway runs: an `https://` webhook (an ntfy topic URL works), `ots:<dir>` for an OpenTimestamps proof, or `file:<path>` to append to a file. |
+| `anchor.every` | `1h` | How often, when the chain has grown; the last head also goes out on shutdown. |
 
 Audit writes are asynchronous and best effort. If the database is unavailable,
 the call still happens; the failure is logged and counted. Auditing can never
@@ -276,6 +326,24 @@ Pins every tool definition in a lockfile and scans it for tool poisoning. See
 | `mode` | `warn` | `warn` pins and reports changes; `enforce` also hides changed and new tools from the host until they are trusted; `off` keeps no lockfile. |
 | `scan` | `warn` | `warn` reports what the definition scan finds; `quarantine` hides a flagged tool until it is trusted; `off` does not scan. |
 | `lockfile` | the config's name with `.lock` | Relative paths are relative to the config. `agentgate lock` reviews and trusts what is in it. |
+| `registry` | *(none)* | A directory or base URL of trusted definitions, one file per server version, as `agentgate lock --publish` writes them. A definition seen for the first time is pinned only when it is what the registry has; one that differs is reported, and held back in `enforce` mode. |
+
+Prompts, resources, resource templates and a server's instructions are pinned
+and scanned like tools, under `prompt:<name>`, `resource:<uri>`,
+`resource-template:<uri>` and `instructions` in the lockfile.
+
+## `taint`
+
+Remembers the values that look like secrets in results a session should keep
+to itself, and notices them in a later call's arguments, plain or encoded.
+See [guardrails.md](guardrails.md#taint-tracking).
+
+| Field | Default | What it does |
+|---|---|---|
+| `mode` | `warn` | `warn` logs it and fires the `exfiltration` event; `ask` and `deny` decide the call; `off` remembers nothing. |
+| `labels` | `[private-data]` | A result is private when its call earned one of these labels. |
+| `tools` | *(none)* | Or when it came from one of these tools: globs over `upstream.tool` or the exposed name. |
+| `min_length` | `12` | The shortest value remembered, at least 6. |
 
 ## `canaries`
 
@@ -307,6 +375,8 @@ See [policies.md](policies.md). The fields that are not rules:
 | `mode` | `enforce` | `shadow` records decisions and blocks nothing. |
 | `redact_results` | `false` | Scrub secrets from results before the agent reads them. |
 | `strip_invisible` | `false` | Remove invisible and reordering characters from results before the agent reads them. |
+| `sampling` | `allow` | What a server's request to have the host's model answer something does: `allow`, `ask` or `deny`. |
+| `elicitation` | `allow` | What a server's request to ask the user for input does. A request for a password-like field is reported either way. |
 | `packs` | *(none)* | Rule sets to switch on, by name or file. |
 | `labels` | *(none)* | Label rules. |
 | `budget`, `loop_guard` | *(off)* | Hard stops before the rules. |

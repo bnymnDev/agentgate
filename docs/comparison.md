@@ -96,7 +96,9 @@ is in the path of every call.
 - **You want central policy for a team.** agentgate is local, single-user,
   single file. No server, no sync, no accounts — though a pack file in a
   shared repository and the GitHub Action go a long way.
-- **You want to govern prompts, sampling or resources.** agentgate governs
-  tools; everything else passes through.
+- **You want rules on what a prompt or a resource returns.** Prompts,
+  resources and server instructions are pinned and scanned, and sampling and
+  elicitation are allowed, asked or denied as a whole; the rule language
+  itself is about tool calls.
 - **You need an authenticated, internet-facing dashboard.** The UI is localhost
   by design and refuses to bind elsewhere without an explicit flag.

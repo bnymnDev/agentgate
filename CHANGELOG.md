@@ -7,8 +7,49 @@ list are on the [releases page](https://github.com/bnymnDev/agentgate/releases).
 
 ## [Unreleased]
 
+agentgate grows from a firewall for tool calls into one for the whole
+protocol, checks the first sight of a server against what others trusted,
+and lets the audit log be witnessed from outside the machine.
+
 ### Added
 
+- `agentgate scan` vets an MCP server before it is trusted: it starts the
+  server, or connects over HTTP, lists its tools, prompts, resources and
+  instructions, runs the poisoning scan over every one and exits 1 on a
+  finding. Text, JSON, Markdown and SARIF output for GitHub code scanning,
+  and `--badge` prints a shields.io badge.
+- Sampling and elicitation go through agentgate. A server's request to have
+  the host's model answer something, or to ask the user for input, is
+  decided by `policy.sampling` and `policy.elicitation` (allow, ask, deny),
+  scanned for injection, recorded in the audit log, and the model's answer is
+  checked for canaries and tainted values on its way back. An elicitation
+  that asks for a password-like field is reported. Both the 2026-07-28
+  multi-round-trip form and the older server-initiated requests are handled.
+- Prompts, resources, resource templates and a server's instructions are
+  pinned in the lockfile and scanned like tools, and their contents are
+  inspected like a tool result.
+- Taint tracking: values that look like secrets in a private result are
+  remembered for the session, and a later call that carries one out, plain
+  or encoded, is reported (`taint.mode: warn`, the default), asked about or
+  denied.
+- Approvals in Telegram and Slack, with the same three buttons as on the
+  phone, over long polling and Socket Mode, so nothing has to reach
+  agentgate from outside. Only presses in the configured chat or channel, by
+  the configured approvers, with the question's one-time nonce count.
+- Chain anchoring: `agentgate anchor` and `audit.anchor` send the head of the
+  hash chain to a file, a webhook or OpenTimestamps (a proof in Bitcoin), on
+  a schedule and on shutdown; `verify --anchors` checks every anchor at once.
+- Registries of trusted definitions: `lock --publish` writes them, one file
+  per server version, `lock --compare` shows what differs and
+  `--trust-matching` trusts what agrees, and `pinning.registry` makes the
+  gateway pin a first sight only when it matches.
+- `agentgate report` writes a session as one self-contained HTML file.
+- `agentgate top`, a live terminal view of sessions, tools and decisions.
+- A public attack corpus in `corpus/`: labelled poisoned and ordinary
+  definitions and results, with detection and false-alarm rates measured on
+  every commit and published in `docs/guardrails.md`, misses included.
+- Releases are signed keylessly with cosign, ship an SBOM per archive and
+  carry SLSA build provenance.
 - `agentgate skills`: a lockfile for Agent Skills. `skills.lock` pins every
   file of every skill in `.claude/skills`, `.agents/skills` and
   `.codex/skills` — and with `--user` in the home directory and Claude Code
@@ -28,8 +69,19 @@ list are on the [releases page](https://github.com/bnymnDev/agentgate/releases).
   verifies a project's skills, writes the report to the job summary and hands
   it out as the `skills-report` output for a pull request comment.
 
+### Changed
+
+- The poisoning scan also catches text in HTML and markdown comments,
+  chat-template tokens, image URLs built from placeholders, blank-space
+  padding, look-alike letters in names, requests to put secrets or the
+  conversation into an argument, decode-and-follow instructions, tools that
+  want to run before every other tool, and text addressed to the AI. Talk of
+  a "system prompt" is flagged only when it is the model's own.
+
 ### Fixed
 
+- A tool call whose server needed sampling or elicitation to finish failed
+  behind agentgate; it now completes.
 - The GitHub Action skips `policy lint` and `test`, with a notice, when it
   installs a release older than 0.4.0, instead of failing on a command that
   release does not have.
