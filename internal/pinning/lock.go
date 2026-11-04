@@ -25,16 +25,64 @@ import (
 	"github.com/bnymnDev/agentgate/internal/audit"
 )
 
-// Definition is the part of a tool that is pinned: everything the model reads
-// and everything that decides how the tool is called. _meta and icons are
-// left out; they are not shown to the model.
+// Definition is the part of what a server offers that is pinned: everything
+// the model reads and everything that decides how it is used. A tool is the
+// common case; a prompt, a resource, a resource template and the server's
+// instructions are pinned the same way, because the model reads them too.
+// _meta and icons are left out; they are not shown to the model.
 type Definition struct {
+	// Kind is empty for a tool, else one of the Kind constants.
+	Kind         string          `json:"kind,omitempty"`
 	Name         string          `json:"name"`
 	Title        string          `json:"title,omitempty"`
 	Description  string          `json:"description,omitempty"`
 	InputSchema  json.RawMessage `json:"inputSchema,omitempty"`
 	OutputSchema json.RawMessage `json:"outputSchema,omitempty"`
 	Annotations  json.RawMessage `json:"annotations,omitempty"`
+	// Arguments are a prompt's arguments.
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	// URI is a resource's URI, or a resource template's URI template.
+	URI      string `json:"uri,omitempty"`
+	MIMEType string `json:"mimeType,omitempty"`
+}
+
+// Kinds of definition other than a tool.
+const (
+	KindPrompt       = "prompt"
+	KindResource     = "resource"
+	KindTemplate     = "resource-template"
+	KindInstructions = "instructions"
+)
+
+// Ref is the key a definition is pinned under: a tool's name, so lockfiles
+// written before other kinds were pinned keep their meaning, and kind:name
+// for the rest — prompt:review, resource:file:///notes/a.md,
+// resource-template:file:///notes/{name}, instructions.
+func (d Definition) Ref() string {
+	switch d.Kind {
+	case "":
+		return d.Name
+	case KindInstructions:
+		return KindInstructions
+	case KindResource, KindTemplate:
+		return d.Kind + ":" + d.URI
+	default:
+		return d.Kind + ":" + d.Name
+	}
+}
+
+// What names the kind of definition in a sentence: "tool", "prompt", ….
+func (d Definition) What() string {
+	switch d.Kind {
+	case "":
+		return "tool"
+	case KindTemplate:
+		return "resource template"
+	case KindInstructions:
+		return "instructions"
+	default:
+		return d.Kind
+	}
 }
 
 // DefinitionFromJSON extracts a Definition from a tool as it travels on the
@@ -139,6 +187,16 @@ func (d *Definition) canonicalize() {
 	d.InputSchema = compact(d.InputSchema)
 	d.OutputSchema = compact(d.OutputSchema)
 	d.Annotations = compact(d.Annotations)
+	d.Arguments = compactList(d.Arguments)
+}
+
+// compactList is compact for a JSON array, which is dropped when empty.
+func compactList(raw json.RawMessage) json.RawMessage {
+	c := audit.Canonical(raw)
+	if len(c) == 0 || string(c) == "null" || string(c) == "[]" {
+		return nil
+	}
+	return c
 }
 
 // Path is where the lockfile lives.
@@ -172,6 +230,35 @@ func (l *Lockfile) Save() error {
 	return os.Rename(tmp.Name(), l.path)
 }
 
+// kindKnown reports whether anything of a kind is pinned for an upstream.
+func (l *Lockfile) kindKnown(upstream, kind string) bool {
+	u, ok := l.Upstreams[upstream]
+	if !ok {
+		return false
+	}
+	for _, pin := range u.Tools {
+		if pin.Definition.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+// Status reports how one definition stands with the lockfile, without the
+// scan; Check does both for a whole upstream.
+func (l *Lockfile) Status(upstream string, d Definition) Status {
+	pin := l.Pinned(upstream, d.Ref())
+	switch {
+	case !l.Known(upstream), d.Kind != "" && !l.kindKnown(upstream, d.Kind):
+		return StatusUnpinned
+	case pin == nil:
+		return StatusNew
+	case pin.Hash != d.Hash():
+		return StatusChanged
+	}
+	return StatusPinned
+}
+
 // Known reports whether an upstream has been pinned before.
 func (l *Lockfile) Known(upstream string) bool {
 	_, ok := l.Upstreams[upstream]
@@ -196,7 +283,7 @@ func (l *Lockfile) Pin(upstream string, d Definition, accepted []string, now tim
 		l.Upstreams[upstream] = u
 	}
 	sort.Strings(accepted)
-	u.Tools[d.Name] = &Pin{Hash: d.Hash(), PinnedAt: now, Definition: d, Accepted: accepted}
+	u.Tools[d.Ref()] = &Pin{Hash: d.Hash(), PinnedAt: now, Definition: d, Accepted: accepted}
 }
 
 // Unpin forgets a tool, or a whole upstream when tool is empty.
@@ -226,7 +313,7 @@ const (
 	StatusUnpinned Status = "unpinned"
 )
 
-// Report is the verdict on one tool.
+// Report is the verdict on one definition. Tool is its Ref.
 type Report struct {
 	Upstream string     `json:"upstream"`
 	Tool     string     `json:"tool"`
@@ -249,11 +336,14 @@ func (l *Lockfile) Check(upstream string, defs []Definition, others []OtherTool)
 	offered := map[string]bool{}
 	out := make([]Report, 0, len(defs))
 	for _, d := range defs {
-		offered[d.Name] = true
-		r := Report{Upstream: upstream, Tool: d.Name, Current: d}
-		pin := l.Pinned(upstream, d.Name)
+		offered[d.Ref()] = true
+		r := Report{Upstream: upstream, Tool: d.Ref(), Current: d}
+		pin := l.Pinned(upstream, d.Ref())
 		switch {
-		case !known:
+		case !known, d.Kind != "" && !l.kindKnown(upstream, d.Kind):
+			// A server seen for the first time, or a kind of definition a
+			// pinned server offers for the first time — prompts on a server
+			// pinned when only tools were — is pinned on sight.
 			r.Status = StatusUnpinned
 		case pin == nil:
 			r.Status = StatusNew

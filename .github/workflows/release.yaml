@@ -18,6 +18,9 @@ permissions:
   contents: write
   # The container image goes to ghcr.io/bnymndev/agentgate.
   packages: write
+  # Keyless signing (cosign) and build provenance use the job's OIDC token.
+  id-token: write
+  attestations: write
 
 concurrency:
   group: release
@@ -54,6 +57,10 @@ jobs:
           go-version-file: go.mod
           check-latest: true
 
+      # cosign signs the checksums and the images; syft writes the SBOMs.
+      - uses: sigstore/cosign-installer@v3
+      - uses: anchore/sbom-action/download-syft@v0
+
       # Multi-platform images: QEMU for arm64 on an amd64 runner, and buildx.
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
@@ -87,3 +94,9 @@ jobs:
           # cask into this repository's Casks/ directory; no other secret is
           # needed.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # SLSA build provenance for every file the checksum list covers:
+      #   gh attestation verify agentgate_<version>_linux_amd64.tar.gz --repo bnymnDev/agentgate
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-checksums: ./dist/checksums.txt

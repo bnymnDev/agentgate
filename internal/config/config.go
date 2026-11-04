@@ -44,6 +44,7 @@ type Config struct {
 	Notify          Notify        `yaml:"notify"`
 	Pinning         Pinning       `yaml:"pinning"`
 	Canaries        Canaries      `yaml:"canaries"`
+	Taint           Taint         `yaml:"taint"`
 	Telemetry       Telemetry     `yaml:"telemetry"`
 
 	// Path is the file the config was read from. It is not part of the file.
@@ -61,7 +62,7 @@ type Telemetry struct {
 
 // Approval configures what happens to calls a rule marked "ask".
 type Approval struct {
-	// Mode is auto, tty, ui, ntfy or deny.
+	// Mode is auto, tty, ui, ntfy, telegram, slack or deny.
 	//
 	//	auto  ask on every channel that is available — the web UI when it is
 	//	      running, the terminal, the phone when ntfy is configured — and
@@ -69,12 +70,82 @@ type Approval struct {
 	//	tty   prompt on the agentgate terminal only
 	//	ui    wait for an approval in the web UI only
 	//	ntfy  ask on the phone only
+	//	telegram, slack  ask in that chat only
 	//	deny  never ask, deny every "ask" decision
 	Mode    string   `yaml:"mode"`
 	Timeout Duration `yaml:"timeout"`
 	// Ntfy puts approvals on your phone through an ntfy server, with
 	// Allow / Allow for session / Deny buttons on the notification.
 	Ntfy *Ntfy `yaml:"ntfy"`
+	// Telegram puts approvals in a Telegram chat, with the same buttons.
+	Telegram *Telegram `yaml:"telegram"`
+	// Slack puts approvals in a Slack channel, with the same buttons.
+	Slack *Slack `yaml:"slack"`
+}
+
+// Telegram is a bot that asks in a chat. agentgate reads the button presses
+// over long polling, so nothing has to reach it from outside; the bot must
+// not have a webhook set, and is best used for nothing else.
+type Telegram struct {
+	// Token is the bot token from @BotFather.
+	Token string `yaml:"token"`
+	// ChatID is the chat the questions go to; only presses in that chat
+	// count.
+	ChatID int64 `yaml:"chat_id"`
+	// Approvers, if set, are the user ids whose presses count.
+	Approvers []int64 `yaml:"approvers"`
+	// API defaults to https://api.telegram.org.
+	API string `yaml:"api"`
+}
+
+func (t *Telegram) normalize() error {
+	var errs []error
+	t.Token, t.API = ExpandEnv(t.Token), ExpandEnv(t.API)
+	if t.API == "" {
+		t.API = "https://api.telegram.org"
+	}
+	if t.Token == "" {
+		errs = append(errs, errors.New("approval.telegram.token: required; @BotFather gives you one"))
+	}
+	if t.ChatID == 0 {
+		errs = append(errs, errors.New("approval.telegram.chat_id: required; the chat the questions go to"))
+	}
+	return errors.Join(errs...)
+}
+
+// Slack is a Slack app that asks in a channel. Button presses arrive over
+// Socket Mode, a connection agentgate opens, so nothing has to reach it from
+// outside.
+type Slack struct {
+	// BotToken (xoxb-…) posts and updates the question.
+	BotToken string `yaml:"bot_token"`
+	// AppToken (xapp-…, with connections:write) opens the Socket Mode
+	// connection the answers arrive on.
+	AppToken string `yaml:"app_token"`
+	// Channel is the channel id the questions go to.
+	Channel string `yaml:"channel"`
+	// Approvers, if set, are the user ids whose presses count.
+	Approvers []string `yaml:"approvers"`
+	// API defaults to https://slack.com/api.
+	API string `yaml:"api"`
+}
+
+func (s *Slack) normalize() error {
+	var errs []error
+	s.BotToken, s.AppToken, s.Channel, s.API = ExpandEnv(s.BotToken), ExpandEnv(s.AppToken), ExpandEnv(s.Channel), ExpandEnv(s.API)
+	if s.API == "" {
+		s.API = "https://slack.com/api"
+	}
+	if !strings.HasPrefix(s.BotToken, "xoxb-") {
+		errs = append(errs, errors.New("approval.slack.bot_token: a bot token, xoxb-…"))
+	}
+	if !strings.HasPrefix(s.AppToken, "xapp-") {
+		errs = append(errs, errors.New("approval.slack.app_token: an app-level token with connections:write, xapp-…"))
+	}
+	if s.Channel == "" {
+		errs = append(errs, errors.New("approval.slack.channel: required; the channel id the questions go to"))
+	}
+	return errors.Join(errs...)
 }
 
 // Ntfy is an ntfy server and topic to put approvals on.
@@ -125,8 +196,58 @@ type Audit struct {
 	// MaxResultBytes caps how much of a result is stored. Larger results are
 	// truncated and flagged.
 	MaxResultBytes int `yaml:"max_result_bytes"`
+	// Anchor writes the head of the hash chain somewhere this machine cannot
+	// rewrite, so a cut-off end of the log shows too.
+	Anchor Anchor `yaml:"anchor"`
 
 	compiled []*regexp.Regexp
+}
+
+// Anchor sends the chain head out on a schedule while the gateway runs.
+type Anchor struct {
+	// To lists destinations: an https:// webhook (an ntfy topic URL works),
+	// ots:<dir> for an OpenTimestamps proof, or file:<path> (a bare path too)
+	// to append to a file.
+	To []string `yaml:"to"`
+	// Every is how often, when the chain has grown. It defaults to 1h; the
+	// last head is also sent when the gateway stops.
+	Every Duration `yaml:"every"`
+}
+
+// DefaultAnchorEvery is how often the chain head goes out.
+const DefaultAnchorEvery = time.Hour
+
+func (a *Anchor) normalize() error {
+	if len(a.To) == 0 {
+		return nil
+	}
+	if a.Every == 0 {
+		a.Every = Duration(DefaultAnchorEvery)
+	}
+	if time.Duration(a.Every) < time.Minute {
+		return errors.New("audit.anchor.every: at least 1m")
+	}
+	for i, to := range a.To {
+		to = strings.TrimSpace(to)
+		if to == "" {
+			return fmt.Errorf("audit.anchor.to[%d]: empty", i)
+		}
+		kind, rest, _ := strings.Cut(to, ":")
+		switch kind {
+		case "file", "ots", "opentimestamps":
+			if expanded, err := ExpandPath(rest); err == nil {
+				to = kind + ":" + expanded
+			}
+		case "http", "https":
+			to = ExpandEnv(to)
+		default:
+			if expanded, err := ExpandPath(to); err == nil {
+				to = expanded
+			}
+		}
+		a.To[i] = to
+	}
+	return nil
 }
 
 // Upstream is one real MCP server agentgate connects to.
@@ -296,11 +417,29 @@ func (c *Config) normalize() error {
 		if c.Approval.Ntfy == nil {
 			errs = append(errs, errors.New("approval.mode is ntfy but approval.ntfy is not set"))
 		}
+	case "telegram":
+		if c.Approval.Telegram == nil {
+			errs = append(errs, errors.New("approval.mode is telegram but approval.telegram is not set"))
+		}
+	case "slack":
+		if c.Approval.Slack == nil {
+			errs = append(errs, errors.New("approval.mode is slack but approval.slack is not set"))
+		}
 	default:
-		errs = append(errs, fmt.Errorf("approval.mode: unknown mode %q, want auto, tty, ui, ntfy or deny", c.Approval.Mode))
+		errs = append(errs, fmt.Errorf("approval.mode: unknown mode %q, want auto, tty, ui, ntfy, telegram, slack or deny", c.Approval.Mode))
 	}
 	if c.Approval.Ntfy != nil {
 		if err := c.Approval.Ntfy.normalize(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if c.Approval.Telegram != nil {
+		if err := c.Approval.Telegram.normalize(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if c.Approval.Slack != nil {
+		if err := c.Approval.Slack.normalize(); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -330,6 +469,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, errors.New("audit.max_result_bytes: must not be negative"))
 	}
 	if err := c.Audit.compile(); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Audit.Anchor.normalize(); err != nil {
 		errs = append(errs, err)
 	}
 
@@ -401,6 +543,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, err)
 	}
 	if err := c.Canaries.normalize(c.Audit.Path); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Taint.normalize(); err != nil {
 		errs = append(errs, err)
 	}
 	c.Telemetry.OTLP.Endpoint = ExpandEnv(c.Telemetry.OTLP.Endpoint)

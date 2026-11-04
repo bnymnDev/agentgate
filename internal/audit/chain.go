@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -125,8 +126,14 @@ type VerifyReport struct {
 	Head Link `json:"head"`
 	// Problems lists every break found. Empty means the chain holds.
 	Problems []ChainProblem `json:"problems,omitempty"`
-	// AnchorChecked reports that an anchor given to Verify was found intact.
+	// AnchorChecked reports that every anchor given to Verify was found intact.
 	AnchorChecked bool `json:"anchor_checked,omitempty"`
+	// AnchorsChecked counts the anchors found intact.
+	AnchorsChecked int `json:"anchors_checked,omitempty"`
+	// Pruned counts anchors older than the retention cut, which can no longer
+	// be checked. A single anchor that old is a problem; among many, the
+	// older ones are expected to fall away.
+	Pruned int `json:"anchors_pruned,omitempty"`
 }
 
 // OK reports whether the chain verified.
@@ -136,6 +143,15 @@ func (r *VerifyReport) OK() bool { return len(r.Problems) == 0 }
 // set, it also checks that the chain still passes through that link — which
 // catches a chain that was cut short and regrown since the link was noted.
 func (s *Store) Verify(ctx context.Context, expect *Link) (*VerifyReport, error) {
+	if expect == nil {
+		return s.VerifyAnchors(ctx, nil)
+	}
+	return s.VerifyAnchors(ctx, []Link{*expect})
+}
+
+// VerifyAnchors is Verify against any number of links noted earlier: every
+// one of them must still be in the chain, or retention must have cut past it.
+func (s *Store) VerifyAnchors(ctx context.Context, expect []Link) (*VerifyReport, error) {
 	report := &VerifyReport{}
 	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM calls WHERE seq IS NULL`).Scan(&report.Legacy); err != nil {
 		return nil, err
@@ -149,10 +165,19 @@ func (s *Store) Verify(ctx context.Context, expect *Link) (*VerifyReport, error)
 	default:
 		report.Anchor = &anchor
 	}
+	want := map[int64]string{}
+	for _, l := range expect {
+		if prev, dup := want[l.Seq]; dup && prev != l.Hash {
+			report.Problems = append(report.Problems, ChainProblem{Seq: l.Seq,
+				What: "two anchors name different calls at this position: one of them was not taken from this log"})
+		}
+		want[l.Seq] = l.Hash
+	}
+	checked := map[int64]bool{}
 	prev := anchor
 	report.Head = anchor
-	if expect != nil && report.Anchor != nil && *expect == anchor {
-		report.AnchorChecked = true
+	if h, ok := want[anchor.Seq]; ok && report.Anchor != nil && h == anchor.Hash {
+		checked[anchor.Seq] = true
 	}
 
 	rows, err := s.db.QueryContext(ctx, `SELECT `+callColumns+` FROM calls WHERE seq IS NOT NULL ORDER BY seq ASC`)
@@ -183,9 +208,9 @@ func (s *Store) Verify(ctx context.Context, expect *Link) (*VerifyReport, error)
 			report.Problems = append(report.Problems, ChainProblem{Seq: c.Seq, CallID: c.ID,
 				What: "was changed after it was written: its contents no longer match its hash"})
 		}
-		if expect != nil && c.Seq == expect.Seq {
-			if c.RowHash == expect.Hash {
-				report.AnchorChecked = true
+		if h, ok := want[c.Seq]; ok {
+			if c.RowHash == h {
+				checked[c.Seq] = true
 			} else {
 				report.Problems = append(report.Problems, ChainProblem{Seq: c.Seq, CallID: c.ID,
 					What: "is not the call the anchor names: the chain was rewritten from here on"})
@@ -197,16 +222,26 @@ func (s *Store) Verify(ctx context.Context, expect *Link) (*VerifyReport, error)
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if expect != nil && !report.AnchorChecked && !hasProblemAt(report, expect.Seq) {
+	reported := map[int64]bool{}
+	for _, l := range expect {
 		switch {
-		case report.Anchor != nil && expect.Seq <= report.Anchor.Seq:
-			report.Problems = append(report.Problems, ChainProblem{Seq: expect.Seq,
-				What: fmt.Sprintf("the anchor is older than the retention cut at seq %d and can no longer be checked", report.Anchor.Seq)})
-		default:
-			report.Problems = append(report.Problems, ChainProblem{Seq: expect.Seq,
+		case checked[l.Seq] && want[l.Seq] == l.Hash:
+			report.AnchorsChecked++
+		case hasProblemAt(report, l.Seq):
+		case report.Anchor != nil && l.Seq <= report.Anchor.Seq:
+			report.Pruned++
+		case !reported[l.Seq]:
+			reported[l.Seq] = true
+			report.Problems = append(report.Problems, ChainProblem{Seq: l.Seq,
 				What: fmt.Sprintf("the chain ends at seq %d and no longer reaches the anchor: calls were removed from its end", report.Head.Seq)})
 		}
 	}
+	report.AnchorChecked = len(expect) > 0 && report.AnchorsChecked == len(expect)
+	if len(expect) == 1 && report.Pruned == 1 {
+		report.Problems = append(report.Problems, ChainProblem{Seq: expect[0].Seq,
+			What: fmt.Sprintf("the anchor is older than the retention cut at seq %d and can no longer be checked", report.Anchor.Seq)})
+	}
+	sort.SliceStable(report.Problems, func(i, j int) bool { return report.Problems[i].Seq < report.Problems[j].Seq })
 	return report, nil
 }
 

@@ -16,8 +16,15 @@ import (
 // no longer there.
 func (p *Proxy) clientOptions(u *upstream) *mcp.ClientOptions {
 	return &mcp.ClientOptions{
-		Logger:                 p.log,
-		ToolListChangedHandler: func(ctx context.Context, _ *mcp.ToolListChangedRequest) { p.refreshAsync("tools", u) },
+		Logger: p.log,
+		// A server's requests to the host — sampling, elicitation — are the
+		// host's to answer. The SDK would answer them here, on agentgate's
+		// side; instead an input-required result goes to the host as it
+		// came, and so does the retried call. See protocol.go.
+		MultiRoundTrip:                &mcp.MultiRoundTripOptions{Disabled: true},
+		CreateMessageWithToolsHandler: p.onSampling(u),
+		ElicitationHandler:            p.onElicitation(u),
+		ToolListChangedHandler:        func(ctx context.Context, _ *mcp.ToolListChangedRequest) { p.refreshAsync("tools", u) },
 		PromptListChangedHandler: func(ctx context.Context, _ *mcp.PromptListChangedRequest) {
 			p.refreshAsync("prompts", u)
 		},

@@ -400,3 +400,38 @@ func text(t *testing.T, res *mcp.CallToolResult) string {
 	require.True(t, ok, "expected text content, got %T", res.Content[0])
 	return tc.Text
 }
+
+// TestScan runs agentgate scan against the notes server, clean and after its
+// "update" hides an instruction in a tool description.
+func TestScan(t *testing.T) {
+	e := build(t)
+	notes := filepath.Join(e.dir, exe("notes-server"))
+	goBuild(t, notes, "../testdata/servers/notes")
+
+	clean := exec.Command(e.agentgate, "scan", "--color", "never", "--", notes)
+	out, err := clean.Output()
+	require.NoError(t, err, string(out))
+	require.Contains(t, string(out), "3 tools")
+	require.Contains(t, string(out), "clean")
+
+	poisoned := exec.Command(e.agentgate, "scan", "--color", "never", "--env", "NOTES_SERVER_UPDATE=1", "--", notes)
+	out, err = poisoned.Output()
+	require.Error(t, err, "a finding fails the scan")
+	require.Contains(t, string(out), "search_notes")
+	require.Contains(t, string(out), "~/.ssh/id_rsa")
+
+	sarif := exec.Command(e.agentgate, "scan", "--format", "sarif", "--fail-on", "none", "--env", "NOTES_SERVER_UPDATE=1", "--", notes)
+	out, err = sarif.Output()
+	require.NoError(t, err)
+	var log struct {
+		Version string `json:"version"`
+		Runs    []struct {
+			Results []struct {
+				RuleID string `json:"ruleId"`
+			} `json:"results"`
+		} `json:"runs"`
+	}
+	require.NoError(t, json.Unmarshal(out, &log))
+	require.Equal(t, "2.1.0", log.Version)
+	require.NotEmpty(t, log.Runs[0].Results)
+}

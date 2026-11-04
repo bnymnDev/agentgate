@@ -49,9 +49,16 @@ const (
 func Scan(d Definition, others []OtherTool) []Finding {
 	var out []Finding
 	texts := []textAt{{"name", d.Name}, {"title", d.Title}, {"description", d.Description}}
+	if d.Kind == KindInstructions {
+		texts = []textAt{{"instructions", d.Description}}
+	}
+	if d.URI != "" {
+		texts = append(texts, textAt{"uri", d.URI})
+	}
 	texts = append(texts, schemaTexts("inputSchema", d.InputSchema)...)
 	texts = append(texts, schemaTexts("outputSchema", d.OutputSchema)...)
 	texts = append(texts, schemaTexts("annotations", d.Annotations)...)
+	texts = append(texts, schemaTexts("arguments", d.Arguments)...)
 	shadow := newShadowMatcher(others)
 	for _, t := range texts {
 		out = append(out, scanText(t, shadow, true)...)
@@ -115,14 +122,30 @@ var instructionPatterns = []struct {
 }{
 	{regexp.MustCompile(`(?i)\b(ignore|disregard|forget|override)\s+(all\s+|any\s+|the\s+|your\s+)?(previous|prior|above|earlier|other|system)\s+(instructions|directions|rules|prompts?|guidelines)`),
 		"tells the model to ignore its instructions", true},
-	{regexp.MustCompile(`(?i)\b(do\s+not|don't|never)\s+(tell|inform|mention|reveal|show|notify|alert|disclose)\b[^.]{0,80}\buser\b`),
+	{regexp.MustCompile(`(?i)\b(do\s+not|don't|never)\s+(tell|inform|mention|reveal|show|notify|alert|disclose)\b[^.]{0,80}\b(user|person|human|owner|operator)\b`),
 		"tells the model to keep something from the user", true},
-	{regexp.MustCompile(`(?i)\bwithout\s+(telling|informing|asking|notifying|alerting|showing)\s+(the\s+)?user\b`),
+	{regexp.MustCompile(`(?i)\bwithout\s+(telling|informing|asking|notifying|alerting|showing)\s+(the\s+)?(user|person|human|owner|operator)\b`),
 		"tells the model to act behind the user's back", true},
 	{regexp.MustCompile(`(?i)<\s*/?\s*(important|system|instructions?|secret|hidden|admin|critical)\s*>`),
 		"wraps text in an <important>-style tag, the usual wrapper for injected instructions", true},
-	{regexp.MustCompile(`(?i)\b(system\s+prompt|developer\s+message|your\s+(instructions|guidelines|rules)\s+(are|say))\b`),
+	{regexp.MustCompile(`(?i)\b((your|the\s+assistant'?s|the\s+model'?s)\s+(system\s+prompt|hidden\s+instructions|guidelines)|(reveal|print|repeat|output|include|show|dump|leak)\b[^.]{0,40}\bsystem\s+prompt|developer\s+message|your\s+(instructions|guidelines|rules)\s+(are|say))\b`),
 		"talks to the model about its own instructions", false},
+	{regexp.MustCompile(`(?i)<!--[\s\S]*?(-->|$)`),
+		"hides text in an HTML comment, which renders as nothing", false},
+	{regexp.MustCompile(`(?m)^\s*\[//\]:\s*#`),
+		"hides text in a markdown comment, which renders as nothing", true},
+	{regexp.MustCompile(`(?i)\[/?INST\]|<\|(im_start|im_end|system|user|assistant|begin_of_text|start_header_id)\|>|<</?SYS>>|<start_of_turn>`),
+		"carries chat-template tokens, which only make sense to a model", true},
+	{regexp.MustCompile(`(?i)!\[[^\]]*\]\(\s*https?://[^)\s]*[?&#][^)\s]*(\{[^}]+\}|\$\w+|<[^>]+>)`),
+		"builds an image URL from a placeholder, which leaks whatever fills it when the image loads", true},
+	{regexp.MustCompile(`(?i)\b(include|put|pass|add|insert|paste|append|attach)\b[^.]{0,60}\b(api[\s_-]?keys?|access[\s_-]?tokens?|tokens|passwords?|secrets|credentials|cookies|session[\s_-]?ids?|conversation(\s+history)?|chat\s+history|the\s+user'?s\s+(last\s+)?messages?)\b[^.]{0,60}\b(argument|parameter|param|field)`),
+		"asks the model to put secrets or the conversation into an argument", false},
+	{regexp.MustCompile(`(?i)\b(decode|base64|rot13|unescape|deobfuscate)\b[^.]{0,60}\b(follow|execute|run|obey|carry\s+out|act\s+on)\b`),
+		"tells the model to decode hidden text and act on it", true},
+	{regexp.MustCompile(`(?i)\b(must|always|should)\s+(be\s+)?(called|used|run|invoked)\s+(first\s+)?before\s+(any|every|all)\s+(other\s+)?tools?`),
+		"tries to put itself in front of every other tool", false},
+	{regexp.MustCompile(`(?i)\b(notes?|message|instructions?)\s+(for|to)\s+(ai|llm|language\s+models?|the\s+assistant|assistants|ai\s+assistants|agents|chatbots)\b|\b(ai|llm)\s+(assistants?|agents?|models?)\s+(reading|summarizing|processing|seeing)\s+this\b`),
+		"addresses the AI that reads it rather than the person", true},
 	{regexp.MustCompile(`(?i)\b(you\s+are\s+now|from\s+now\s+on,?\s+you|act\s+as\s+(an?\s+)?(admin|root|developer|system))\b`),
 		"tries to change who the model thinks it is", false},
 	{regexp.MustCompile(`(?i)\b(send|forward|post|upload|exfiltrate|leak|transmit|e-?mail|copy)\b[^.\n]{0,80}\b(to|at)\s+(https?://\S+|[\w.+-]+@[\w-]+\.[\w.-]+)`),
@@ -223,6 +246,21 @@ func scanText(t textAt, shadow *shadowMatcher, definition bool) []Finding {
 		}
 		if loc := p.re.FindStringIndex(visible); loc != nil {
 			out = append(out, Finding{Kind: KindInstruction, Where: t.where, Detail: p.detail, Excerpt: excerpt(visible, loc)})
+		}
+	}
+	if definition {
+		if loc := blankRun.FindStringIndex(t.text); loc != nil {
+			rest := strings.TrimSpace(t.text[loc[1]:])
+			if rest != "" {
+				out = append(out, Finding{Kind: KindInvisible, Where: t.where,
+					Detail: "pads the text with blank space that pushes what follows out of view", Excerpt: excerpt(rest, []int{0, min(len(rest), 120)})})
+			}
+		}
+		if t.where == "name" || strings.HasSuffix(t.where, ".name") {
+			if mixedScript(t.text) {
+				out = append(out, Finding{Kind: KindShadowing, Where: t.where,
+					Detail: "spells its name with look-alike letters from more than one alphabet", Excerpt: Reveal(t.text)})
+			}
 		}
 	}
 	// A tool's own name is allowed to say what it is.
@@ -434,4 +472,23 @@ func Reveal(s string) string {
 	}
 	flush()
 	return b.String()
+}
+
+// blankRun is enough blank space to push text out of a reader's view.
+var blankRun = regexp.MustCompile(`(\s*\n){12,}|[ \t\x{00A0}]{60,}`)
+
+// mixedScript reports a name with letters from Latin and from another
+// alphabet that has look-alikes of Latin letters: rеad_file with a
+// Cyrillic е reads the same as read_file and is another name.
+func mixedScript(s string) bool {
+	var latin, other bool
+	for _, r := range s {
+		switch {
+		case unicode.Is(unicode.Latin, r):
+			latin = true
+		case unicode.Is(unicode.Cyrillic, r), unicode.Is(unicode.Greek, r), unicode.Is(unicode.Armenian, r):
+			other = true
+		}
+	}
+	return latin && other
 }

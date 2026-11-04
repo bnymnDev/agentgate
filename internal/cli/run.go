@@ -88,6 +88,11 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 		}()
 	}
 
+	if store != nil && len(cfg.Audit.Anchor.To) > 0 {
+		go anchorLoop(ctx, cfg, store, log)
+		log.Info("audit chain is anchored", "to", strings.Join(cfg.Audit.Anchor.To, ", "), "every", time.Duration(cfg.Audit.Anchor.Every).String())
+	}
+
 	exporter, err := telemetry.New(cfg.Telemetry.OTLP, version(), log)
 	if err != nil {
 		return err
@@ -172,13 +177,31 @@ func runProxy(ctx context.Context, g *globals, opts runOptions) error {
 // logged, because a policy that says "ask" and silently means "deny" is worse
 // than one that says "deny".
 func buildApprover(ctx context.Context, cfg *config.Config, inbox *proxy.Inbox, uiRunning bool, log *slog.Logger) proxy.Approver {
+	redactor := audit.NewRedactor(cfg.Audit.Redactors())
 	var phone *proxy.NtfyApprover
 	if n := cfg.Approval.Ntfy; n != nil {
-		redactor := audit.NewRedactor(cfg.Audit.Redactors())
 		phone = &proxy.NtfyApprover{
 			Server: n.Server, Topic: n.Topic, Token: n.Token,
 			Redact: redactor.Redact,
 			Client: &http.Client{Timeout: 15 * time.Second},
+			Log:    log,
+		}
+	}
+	var telegram *proxy.TelegramApprover
+	if t := cfg.Approval.Telegram; t != nil {
+		telegram = &proxy.TelegramApprover{
+			Token: t.Token, ChatID: t.ChatID, Approvers: t.Approvers, API: t.API,
+			Redact: redactor.Redact,
+			Client: &http.Client{Timeout: 70 * time.Second},
+			Log:    log,
+		}
+	}
+	var slack *proxy.SlackApprover
+	if s := cfg.Approval.Slack; s != nil {
+		slack = &proxy.SlackApprover{
+			BotToken: s.BotToken, AppToken: s.AppToken, Channel: s.Channel, Approvers: s.Approvers, API: s.API,
+			Redact: redactor.Redact,
+			Client: &http.Client{Timeout: 30 * time.Second},
 			Log:    log,
 		}
 	}
@@ -206,6 +229,14 @@ func buildApprover(ctx context.Context, cfg *config.Config, inbox *proxy.Inbox, 
 		listen()
 		log.Info("approvals go to your phone", "server", phone.Server)
 		return phone
+	case "telegram":
+		go telegram.Run(ctx)
+		log.Info("approvals go to Telegram", "chat", telegram.ChatID)
+		return telegram
+	case "slack":
+		go slack.Run(ctx)
+		log.Info("approvals go to Slack", "channel", slack.Channel)
+		return slack
 	default: // auto: every channel at once, first answer wins
 		var channels proxy.FanoutApprover
 		var names []string
@@ -222,8 +253,18 @@ func buildApprover(ctx context.Context, cfg *config.Config, inbox *proxy.Inbox, 
 			channels = append(channels, phone)
 			names = append(names, "phone")
 		}
+		if telegram != nil {
+			go telegram.Run(ctx)
+			channels = append(channels, telegram)
+			names = append(names, "Telegram")
+		}
+		if slack != nil {
+			go slack.Run(ctx)
+			channels = append(channels, slack)
+			names = append(names, "Slack")
+		}
 		if len(channels) == 0 {
-			log.Info("no approval channel available; ask rules will deny", "hint", "run with --ui to approve in the browser, or set approval.ntfy to approve on your phone")
+			log.Info("no approval channel available; ask rules will deny", "hint", "run with --ui to approve in the browser, or set approval.ntfy, approval.telegram or approval.slack")
 			return proxy.DenyApprover{}
 		}
 		log.Info("approvals are asked on", "channels", strings.Join(names, ", "))

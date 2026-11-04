@@ -12,6 +12,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bnymnDev/agentgate/internal/audit"
+	"github.com/bnymnDev/agentgate/internal/canary"
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/policy"
@@ -52,7 +53,27 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 	if hit, ok := p.findCanary(args, call.Args); ok {
 		return p.canaryTripped(st, b, args, hit, started), nil
 	}
+	// A retried call carries the host's answers to the server's requests:
+	// the model's reply, the user's input. They leave like arguments do.
+	if len(req.Params.InputResponses) > 0 {
+		answers, _ := json.Marshal(req.Params.InputResponses)
+		if d, hit := p.egressHit(st, answers); hit {
+			rec := &audit.Call{ID: audit.NewID(), SessionID: st.id, TS: started, Upstream: b.Upstream, Tool: b.Exposed,
+				Args: args, Decision: d.Action, RuleID: d.RuleID, Reason: d.Reason, CatalogHash: p.catalogHash()}
+			result := deniedResult(d)
+			rec.Result = marshalResult(result)
+			p.denyEgress(st, rec, d)
+			return result, nil
+		}
+	}
 	decision := policy.Evaluate(&cfg.Policy, call)
+	// A secret the session read from a private result, on its way out. The
+	// stricter of the two decides; the kill switch stays the kill switch.
+	if decision.RuleID != policy.RuleFrozen {
+		if d, hit := p.taintHit(st, string(args)+"\n"+canary.Strings(anyMap(call.Args))); hit && rank(d.Action) > rank(decision.Action) {
+			decision = d
+		}
+	}
 
 	rec := &audit.Call{
 		ID:          audit.NewID(),
@@ -142,6 +163,22 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 	rec.IsError = result != nil && result.IsError
 	builtin := p.inspectResult(st, b, rec.Result)
 
+	// The server needs something from the host before it can finish:
+	// sampling, elicitation. The request goes to the host through policy.
+	if result != nil && len(result.InputRequests) > 0 {
+		d, labels := p.inputRequestsDecision(ctx, st, b.Upstream, b.Exposed, describeInputRequests(result.InputRequests))
+		builtin = append(builtin, labels...)
+		if d.Action != policy.ActionAllow {
+			result = deniedResult(d)
+			rec.Decision, rec.RuleID, rec.Reason, rec.IsError = d.Action, d.RuleID, d.Reason, true
+			rec.Labels = p.forwarded(&cfg.Policy, st, call, nil, audit.TokensEst(args, rec.Result), started, builtin...)
+			p.record(st, rec)
+			event.Event, event.Decision = config.EventDeny, d
+			p.notify.emit(event)
+			return result, nil
+		}
+	}
+
 	if cfg.Policy.RedactResults {
 		if n := p.redactResult(result); n > 0 {
 			p.log.Info("redacted secrets from a tool result before the agent saw it",
@@ -155,7 +192,13 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		}
 	}
 
-	rec.Labels = p.forwarded(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
+	var produced []string
+	rec.Labels, produced = p.forwardedAll(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
+	if p.taintsFrom(st, b.Exposed, produced) || p.taintsFrom(st, b.Upstream+"."+b.Name, produced) {
+		if res := policy.ResultFromJSON(rec.Result); res != nil {
+			p.taint(st, res.Text, b.Exposed)
+		}
+	}
 	p.record(st, rec)
 	return result, nil
 }
@@ -164,7 +207,14 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 // applies the policy's label rules to it, next to the labels agentgate
 // attaches itself. It returns the labels the session earned with this call.
 func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time, builtin ...string) []string {
-	labels := builtin
+	added, _ := p.forwardedAll(pol, st, call, result, tokens, at, builtin...)
+	return added
+}
+
+// forwardedAll is forwarded, and also returns every label the call produced,
+// including the ones the session already had.
+func (p *Proxy) forwardedAll(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time, builtin ...string) ([]string, []string) {
+	labels := append([]string(nil), builtin...)
 	if len(pol.Labels) > 0 {
 		if pol.LabelsReadResult() {
 			call.Result = policy.ResultFromJSON(result)
@@ -175,7 +225,7 @@ func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Cal
 	if len(added) > 0 {
 		p.log.Info("session labelled", "session", st.id, "tool", call.Tool, "labels", strings.Join(added, ","))
 	}
-	return added
+	return added, labels
 }
 
 // verb is the past tense the shadow-mode messages use.
@@ -243,20 +293,31 @@ func (p *Proxy) redactResult(res *mcp.CallToolResult) int {
 	return n
 }
 
+// anyMap lets a decoded argument object be walked like any JSON value.
+func anyMap(m map[string]any) any {
+	if m == nil {
+		return nil
+	}
+	return m
+}
+
 // forward sends the call upstream unchanged: same arguments, same _meta, same
-// progress token.
+// progress token, and on a retry the host's answers to the server's requests.
 func (p *Proxy) forward(ctx context.Context, u *upstream, b ToolBinding, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	session, err := u.conn()
 	if err != nil {
 		return nil, err
 	}
 	params := &mcp.CallToolParams{
-		Name: b.Name,
-		Meta: req.Params.Meta,
+		Name:           b.Name,
+		Meta:           req.Params.Meta,
+		InputResponses: req.Params.InputResponses,
+		RequestState:   req.Params.RequestState,
 	}
 	if len(req.Params.Arguments) > 0 {
 		params.Arguments = req.Params.Arguments
 	}
+	defer p.hosts.enter(b.Upstream, req.Session)()
 	return session.CallTool(ctx, params)
 }
 

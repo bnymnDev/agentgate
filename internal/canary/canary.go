@@ -275,6 +275,10 @@ type needle struct {
 	fold     bool
 }
 
+// NewDetector builds a detector for values that are not canaries from the
+// store, such as the tainted values of a session.
+func NewDetector(canaries []Canary) *Detector { return newDetector(canaries) }
+
 func newDetector(canaries []Canary) *Detector {
 	d := &Detector{list: canaries}
 	for i, c := range canaries {

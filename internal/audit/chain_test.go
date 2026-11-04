@@ -283,3 +283,45 @@ func TestConcurrentMigrations(t *testing.T) {
 		require.NoError(t, err)
 	}
 }
+
+// Many anchors at once: every one must still be in the chain, two that
+// disagree about one position give themselves away, and the ones retention
+// cut past are counted, not failed.
+func TestManyAnchors(t *testing.T) {
+	ctx := context.Background()
+	store := openTemp(t, Options{})
+	record(t, store, 1, time.Now().Add(-72*time.Hour))
+	early, err := store.Head(ctx)
+	require.NoError(t, err)
+	record(t, store, 2, time.Now().Add(-72*time.Hour))
+	first, err := store.Head(ctx)
+	require.NoError(t, err)
+	record(t, store, 3, time.Now())
+	second, err := store.Head(ctx)
+	require.NoError(t, err)
+
+	report, err := store.VerifyAnchors(ctx, []Link{first, second})
+	require.NoError(t, err)
+	require.True(t, report.OK(), "%+v", report.Problems)
+	require.True(t, report.AnchorChecked)
+	require.Equal(t, 2, report.AnchorsChecked)
+
+	report, err = store.VerifyAnchors(ctx, []Link{first, {Seq: first.Seq, Hash: second.Hash}})
+	require.NoError(t, err)
+	require.Contains(t, fmt.Sprint(report.Problems), "two anchors name different calls")
+
+	_, err = store.Prune(ctx, time.Now().Add(-24*time.Hour))
+	require.NoError(t, err)
+	report, err = store.VerifyAnchors(ctx, []Link{early, first, second})
+	require.NoError(t, err)
+	require.True(t, report.OK(), "%+v", report.Problems)
+	require.Equal(t, 1, report.Pruned)
+	require.Equal(t, 2, report.AnchorsChecked, "the cut lands exactly on the first anchor")
+	require.False(t, report.AnchorChecked)
+
+	_, err = store.db.ExecContext(ctx, `DELETE FROM calls WHERE seq = ?`, second.Seq)
+	require.NoError(t, err)
+	report, err = store.VerifyAnchors(ctx, []Link{first, second})
+	require.NoError(t, err)
+	require.Contains(t, fmt.Sprint(report.Problems), "no longer reaches the anchor")
+}

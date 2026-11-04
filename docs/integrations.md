@@ -103,7 +103,7 @@ jobs:
       # Installs agentgate, checksum-verified, and puts it on the PATH.
       # With a config, validates it, runs its policy tests, and fails the
       # step on a lint warning or a failing test.
-      - uses: bnymnDev/agentgate@v0.4.0
+      - uses: bnymnDev/agentgate@v0.5.0
         with:
           config: .github/agentgate.yaml
 
@@ -113,7 +113,7 @@ jobs:
       # Writes what the agent did to the job summary, verifies the audit
       # log's hash chain, and fails the job on a canary, a honeypot or a
       # quarantined tool.
-      - uses: bnymnDev/agentgate/report@v0.4.0
+      - uses: bnymnDev/agentgate/report@v0.5.0
         if: always()
         with:
           config: .github/agentgate.yaml
@@ -143,6 +143,39 @@ fails, `agentgate stats --fail-on '…'` when a threshold is crossed,
 `agentgate verify` on a broken chain, and `agentgate lock --check` when a
 server changed a tool since the lockfile was committed, and
 `agentgate skills verify` when a skill changed since `skills.lock` was.
+
+### Scanning servers in code scanning
+
+`agentgate scan` vets a server without a config, and its SARIF output goes
+into GitHub code scanning, where a poisoned definition shows up as an alert
+on the pull request that brought the server in:
+
+```yaml
+      - uses: bnymnDev/agentgate@v0.5.0
+      - run: agentgate scan --format sarif -- npx -y @acme/mcp-server > mcp-scan.sarif || true
+      - uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: mcp-scan.sarif
+          category: mcp-scan
+```
+
+Without the `|| true` the step fails on a finding instead. A server's own
+README can carry the result: `agentgate scan --badge -- <command>` prints a
+shields.io badge, clean or with the number of findings.
+
+### A team registry
+
+`agentgate lock --publish registry/` writes every definition you trusted,
+one file per server version, in a form that does not depend on your machine.
+Commit the directory to a repository the team reviews like code, and check
+every machine and every CI job against it:
+
+```yaml
+      - run: agentgate lock --config .github/agentgate.yaml --compare registry/ --check
+```
+
+or set `pinning.registry` and let the gateway check every first sight on its
+own. A raw GitHub URL of the repository works as a registry too.
 
 ## Containers
 
@@ -222,3 +255,55 @@ Approvals and alerts both go through [ntfy](https://ntfy.sh): alerts with a
 `notify.webhooks` entry of `format: ntfy`, approvals with `approval.ntfy`,
 which puts Allow / Allow for session / Deny buttons on the notification. See
 [guardrails.md](guardrails.md#approvals).
+
+## Telegram and Slack
+
+The same approval buttons as on the phone, in a chat the team already
+watches. Neither needs a public URL.
+
+**Telegram.** Create a bot with @BotFather, add it to a group, and find the
+group's chat id (send a message and open
+`https://api.telegram.org/bot<token>/getUpdates`). Then:
+
+```yaml
+approval:
+  telegram:
+    token: ${TELEGRAM_BOT_TOKEN}
+    chat_id: -1001234567890
+    approvers: [123456789]      # optional
+```
+
+**Slack.** Create an app, switch on Socket Mode and Interactivity, give the
+bot `chat:write`, make an app-level token with `connections:write`, install
+it and invite the bot to the channel. Then:
+
+```yaml
+approval:
+  slack:
+    bot_token: ${SLACK_BOT_TOKEN}
+    app_token: ${SLACK_APP_TOKEN}
+    channel: C0123456789
+    approvers: [U0123456789]    # optional
+```
+
+`agentgate doctor` checks both tokens. See
+[guardrails.md](guardrails.md#approvals) for what counts as an answer.
+
+## Verifying a release
+
+Every release's `checksums.txt` is signed keylessly with Sigstore by the
+release workflow itself, every archive has an SBOM, and every file the
+checksums cover has SLSA build provenance:
+
+```sh
+cosign verify-blob checksums.txt --bundle checksums.txt.sigstore.json \
+  --certificate-identity-regexp '^https://github.com/bnymnDev/agentgate/\.github/workflows/release\.yaml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c checksums.txt
+
+gh attestation verify agentgate_0.5.0_linux_amd64.tar.gz --repo bnymnDev/agentgate
+
+cosign verify ghcr.io/bnymndev/agentgate:0.5.0 \
+  --certificate-identity-regexp '^https://github.com/bnymnDev/agentgate/\.github/workflows/release\.yaml@' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```

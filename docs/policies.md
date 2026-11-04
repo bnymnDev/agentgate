@@ -43,6 +43,13 @@ honeypot (rule id `honeypot`), a call that carries a canary out (`canary`), and
 a call to a tool pinning has quarantined (`quarantine`). See
 [guardrails.md](guardrails.md).
 
+A call that carries a value the session read from a private result out is
+checked after the rules, by [taint tracking](guardrails.md#taint-tracking),
+and the stricter of the two decisions wins (rule id `taint`). Requests a
+server makes of the host — sampling and elicitation — are decided by
+`policy.sampling` and `policy.elicitation` (rule ids `sampling` and
+`elicitation`), not by tool rules.
+
 `mode: shadow` changes what is *done* with a decision, not the decision: it is
 recorded as reached, and the call is forwarded anyway.
 

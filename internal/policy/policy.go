@@ -81,6 +81,13 @@ const (
 	RuleQuarantine = "quarantine"
 	// RuleCanary denies a call that carries a canary token out.
 	RuleCanary = "canary"
+	// RuleTaint decides a call that carries out a value the session read
+	// from a tool result marked private.
+	RuleTaint = "taint"
+	// RuleSampling and RuleElicitation decide a server's request to the
+	// host: to have its model answer something, or to ask the user.
+	RuleSampling    = "sampling"
+	RuleElicitation = "elicitation"
 )
 
 // Allowed reports whether the call may be forwarded without further ado.
@@ -111,9 +118,16 @@ type Policy struct {
 	// before the agent reads them. They are how a web page or an issue
 	// comment smuggles instructions past the person looking at it. Off
 	// unless you turn it on; the audit log keeps the result as it came.
-	StripInvisible bool      `yaml:"strip_invisible" json:"strip_invisible,omitempty"`
-	Budget         Budget    `yaml:"budget" json:"budget"`
-	LoopGuard      LoopGuard `yaml:"loop_guard" json:"loop_guard"`
+	StripInvisible bool `yaml:"strip_invisible" json:"strip_invisible,omitempty"`
+	// Sampling decides a server's request to have the host's model answer
+	// something (sampling/createMessage): allow, the default, ask or deny.
+	// What the server writes there goes to the model unfiltered.
+	Sampling Action `yaml:"sampling" json:"sampling,omitempty"`
+	// Elicitation decides a server's request to ask the user for input
+	// (elicitation/create): allow, the default, ask or deny.
+	Elicitation Action    `yaml:"elicitation" json:"elicitation,omitempty"`
+	Budget      Budget    `yaml:"budget" json:"budget"`
+	LoopGuard   LoopGuard `yaml:"loop_guard" json:"loop_guard"`
 	// Labels attach names to a session once a matching call has gone
 	// through, so that later rules can ask what the session has done
 	// ("session.label.untrusted-input"). See LabelsFor.

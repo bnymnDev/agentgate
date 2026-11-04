@@ -348,7 +348,7 @@ as `--fail-on` (default `high`; `none` never fails).
 ## In CI
 
 ```yaml
-- uses: bnymnDev/agentgate@v0.5.0   # skills need the first release after 0.4.0
+- uses: bnymnDev/agentgate@v0.5.0   # skills need 0.5.0 or later
   id: agentgate
   with:
     skills: .                        # the project whose skills.lock to verify
