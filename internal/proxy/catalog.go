@@ -455,3 +455,18 @@ func (p *Proxy) Upstreams() []UpstreamInfo {
 	}
 	return out
 }
+
+// CallUpstream calls a tool on an upstream directly, past the policy, the
+// audit log and everything else. It is for agentgate probe, which a person
+// runs on purpose against tools they chose; the gateway never uses it.
+func (p *Proxy) CallUpstream(ctx context.Context, upstream, tool string, args map[string]any) (*mcp.CallToolResult, error) {
+	u, ok := p.byName[upstream]
+	if !ok {
+		return nil, fmt.Errorf("%s: no such upstream", upstream)
+	}
+	session, err := u.conn()
+	if err != nil {
+		return nil, err
+	}
+	return session.CallTool(ctx, &mcp.CallToolParams{Name: tool, Arguments: args})
+}

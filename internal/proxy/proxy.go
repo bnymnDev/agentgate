@@ -20,6 +20,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/canary"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/flow"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
@@ -62,6 +63,12 @@ type Proxy struct {
 	registry   map[string]*pinning.Entry
 
 	sessions sync.Map // *mcp.ServerSession -> *sessionState
+	// spend is what every session has spent today, for the money budget.
+	spend dailySpend
+	// shared is what other sessions earned, for shared_labels.
+	shared sharedLabels
+	// behavior is the profile calls are compared with.
+	behavior behaviorCache
 	// hosts tracks which host session each upstream is serving a call for.
 	hosts hostSessions
 
@@ -106,6 +113,9 @@ type sessionState struct {
 	approved map[string]bool
 	// taint is what the session read from private results.
 	taint tainted
+	// flows holds, per flow contract, the fingerprints of what the session
+	// read from the flow's sources.
+	flows map[string]*flow.Set
 }
 
 // approvedForSession reports whether a human already waved this tool through
@@ -135,10 +145,11 @@ func (st *sessionState) observe(tool, sig string, now time.Time) (policy.Counts,
 
 // forwarded records that a call went upstream and what it cost, and adds the
 // labels it earned. It returns the labels the session did not have before.
-func (st *sessionState) forwarded(call *policy.Call, tokens int, now time.Time, labels []string) []string {
+func (st *sessionState) forwarded(call *policy.Call, tokens int, cost float64, now time.Time, labels []string) []string {
 	st.mu.Lock()
 	defer st.mu.Unlock()
 	st.track.Forwarded(call, tokens, now)
+	st.track.Spend(cost)
 	return st.track.Earn(labels...)
 }
 

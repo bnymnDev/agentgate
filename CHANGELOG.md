@@ -7,6 +7,66 @@ list are on the [releases page](https://github.com/bnymnDev/agentgate/releases).
 
 ## [Unreleased]
 
+### Security
+
+- The `baseline`, `git-safety`, `database`, `shell-strict` and `filesystem`
+  packs could be stepped around by spelling a command differently: `"rm" -rf /`
+  and `r''m -rf /` were not the `rm` the baseline rule looked for,
+  `DROP/**/TABLE` and `DELETE/**/FROM` got past the SQL rules, a `where`
+  inside a comment counted as a `where`, and the example policy let
+  `/home/me/repo/../../../etc/passwd` through as a path inside the
+  repository. The packs now use the new `shell_regex`, `sql_regex` and
+  `path_prefix` matchers and hold against every variant `agentgate fuzz`
+  makes.
+
+### Added
+
+- `agentgate fuzz` turns every policy test that must stop a call into
+  variants that mean the same and are spelled differently — commands through
+  `env`, `sh -c` or after another, split or swapped flags, quoted or escaped
+  names, SQL split by comments, paths with `./`, `//` or a climb out of an
+  allowed directory, URLs with the host in capitals or user info in front —
+  and reports every variant that gets a weaker decision.
+- Matchers that read a value the way its reader does: `shell_regex` and
+  `not_shell_regex` (quotes join, escapes and `$IFS` undone), `sql_regex` and
+  `not_sql_regex` (comments are spaces), `path_prefix` and `not_path_prefix`
+  (`.` and `..` resolved, directory boundaries respected).
+- A money budget: `policy.budget.money` prices tokens per million and paid
+  tools per call, and caps spending per session and per day across every
+  session on the machine. `agentgate bill` shows a month per day and per tool.
+- Shared labels: `shared_labels` makes a label one session earned count for
+  every session on the machine for a while, across gateway processes, so
+  handing work to another agent does not wash it off.
+- Data-flow contracts: `flows` say what was read from one set of tools, or
+  from calls that earned a label, must not turn up in another's arguments.
+  Results are fingerprinted by winnowing, which keeps hashes, not text.
+- A two-person rule: `quorum: 2` on an ask rule waits for two different
+  people. A chat counts each person in it once; one deny is enough.
+- Approvals signed with passkeys: `approval.passkeys` makes an approval in the
+  web UI a WebAuthn assertion over the approval, the answer and the
+  arguments, kept in the audit log; `required: true` refuses everything
+  else. `agentgate passkey enroll` prints the one-time code an enrolment
+  needs.
+- Behaviour pinning: `agentgate behavior learn` profiles what every tool
+  does — result sizes, durations, arguments, labels — and `behavior.profile`
+  reports, asks about or denies calls far outside it; `behavior check` lists
+  them after the fact. A new `anomaly` webhook event.
+- `agentgate probe` calls a server's read-only tools with arguments made up
+  from their schemas and scans what comes back for injection, for cron.
+- Registries keep an append-only transparency log: `log.jsonl` and
+  `head.json`, a Merkle root in the shape of RFC 6962. `agentgate registry
+  verify` checks entries against it and a noted head against the log, and
+  lists server versions published twice with different definitions;
+  `registry head --to` anchors the head.
+- A time-travel debugger in the web UI: a slider through a session that
+  shows, call by call, the decision then, the decision now and the session
+  as it stood. `agentgate replay --until n` stops after n calls.
+
+### Changed
+
+- The web UI's approvals inbox takes more than one answer to a question, so
+  a quorum can gather there, and shows how many approvals a question has.
+
 ## [0.5.0] - 2026-11-04
 
 agentgate grows from a firewall for tool calls into one for the whole

@@ -3,9 +3,11 @@
   <h1>Approvals</h1>
   <p>Calls a rule marked <code>ask</code>. They are waiting right now — the agent is blocked until you answer or the timeout runs out.</p>
 </hgroup>
+{{if .Signed}}<p><small class="muted">Answers are signed with a passkey. <a href="/passkeys">Passkeys</a> · <span id="passkey-status" role="status"></span></small></p>{{end}}
 <div id="approval-list" hx-get="/partials/approvals" hx-trigger="every 2s" hx-swap="innerHTML">
   {{template "approval-rows" .}}
 </div>
+{{if .Signed}}<script src="/static/passkeys.js" defer></script>{{end}}
 {{end}}
 
 {{define "approval-rows"}}
@@ -20,12 +22,21 @@
   </header>
   <p>{{.Request.Decision.Reason}}</p>
   <pre><code>{{pretty .Request.Args}}</code></pre>
+  {{if gt .Request.Quorum 1}}<p><span class="badge ask">{{.Approvals}} of {{.Request.Quorum}} approvals</span> <small class="muted">different people must allow it; one deny is enough to stop it</small></p>{{end}}
   <footer>
+    {{if $.Signed}}
+    <div role="group">
+      <button data-sign="/approvals/{{.ID}}/allow">Allow once, signed</button>
+      <button data-sign="/approvals/{{.ID}}/allow-session" class="contrast" title="Allow this tool for the rest of this session; it will not be asked again">Allow for this session, signed</button>
+      <button data-sign="/approvals/{{.ID}}/deny" class="secondary">Deny, signed</button>
+    </div>
+    {{else}}
     <div role="group">
       <button hx-post="/approvals/{{.ID}}/allow" hx-target="#approval-list">Allow once</button>
       <button hx-post="/approvals/{{.ID}}/allow-session" hx-target="#approval-list" class="contrast" title="Allow this tool for the rest of this session; it will not be asked again">Allow for this session</button>
       <button hx-post="/approvals/{{.ID}}/deny" hx-target="#approval-list" class="secondary">Deny</button>
     </div>
+    {{end}}
   </footer>
 </article>
 {{end}}

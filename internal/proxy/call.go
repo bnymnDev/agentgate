@@ -35,7 +35,9 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	args := req.Params.Arguments
 	signature := b.Exposed + "\x00" + audit.Hash(args)
+	p.inherit(ctx, cfg, st, started)
 	counts, history := st.observe(b.Exposed, signature, started)
+	counts.SpentToday = p.spentToday(ctx, cfg, started)
 	call := &policy.Call{
 		Tool:        b.Exposed,
 		Upstream:    b.Upstream,
@@ -70,7 +72,14 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 	// A secret the session read from a private result, on its way out. The
 	// stricter of the two decides; the kill switch stays the kill switch.
 	if decision.RuleID != policy.RuleFrozen {
-		if d, hit := p.taintHit(st, string(args)+"\n"+canary.Strings(anyMap(call.Args))); hit && rank(d.Action) > rank(decision.Action) {
+		outgoing := string(args) + "\n" + canary.Strings(anyMap(call.Args))
+		if d, hit := p.taintHit(st, outgoing); hit && rank(d.Action) > rank(decision.Action) {
+			decision = d
+		}
+		if d, hit := p.flowHit(cfg, st, bindingNames(b), canary.Strings(anyMap(call.Args))); hit && rank(d.Action) > rank(decision.Action) {
+			decision = d
+		}
+		if d, hit := p.behaviorBefore(cfg, st, b.Exposed, args); hit && rank(d.Action) > rank(decision.Action) {
 			decision = d
 		}
 	}
@@ -194,10 +203,16 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	var produced []string
 	rec.Labels, produced = p.forwardedAll(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
-	if p.taintsFrom(st, b.Exposed, produced) || p.taintsFrom(st, b.Upstream+"."+b.Name, produced) {
-		if res := policy.ResultFromJSON(rec.Result); res != nil {
+	if extra := p.behaviorAfter(cfg, st, b.Exposed, rec.Result, time.Since(started), produced); len(extra) > 0 {
+		if added := st.earn(extra...); len(added) > 0 {
+			rec.Labels = append(rec.Labels, added...)
+		}
+	}
+	if res := policy.ResultFromJSON(rec.Result); res != nil {
+		if p.taintsFrom(st, b.Exposed, produced) || p.taintsFrom(st, b.Upstream+"."+b.Name, produced) {
 			p.taint(st, res.Text, b.Exposed)
 		}
+		p.readFrom(cfg, st, bindingNames(b), produced, res.Text)
 	}
 	p.record(st, rec)
 	return result, nil
@@ -221,7 +236,10 @@ func (p *Proxy) forwardedAll(pol *policy.Policy, st *sessionState, call *policy.
 		}
 		labels = append(labels, policy.LabelsFor(pol, call)...)
 	}
-	added := st.forwarded(call, tokens, at, labels)
+	cost := pol.Budget.Money.Cost(call, tokens)
+	p.spent(cost)
+	added := st.forwarded(call, tokens, cost, at, labels)
+	p.noteLabels(p.Config(), st.id, labels, at)
 	if len(added) > 0 {
 		p.log.Info("session labelled", "session", st.id, "tool", call.Tool, "labels", strings.Join(added, ","))
 	}
@@ -342,7 +360,11 @@ func (p *Proxy) resolveAsk(ctx context.Context, st *sessionState, b ToolBinding,
 	}
 	p.log.Info("approval required",
 		"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
-	verdict, err := p.approver.Approve(askCtx, ApprovalRequest{
+	approver := p.approver
+	if _, fan := approver.(FanoutApprover); decision.Quorum > 1 && !fan {
+		approver = FanoutApprover{approver}
+	}
+	verdict, err := approver.Approve(askCtx, ApprovalRequest{
 		SessionID: st.id,
 		Upstream:  b.Upstream,
 		Tool:      b.Exposed,
@@ -350,6 +372,7 @@ func (p *Proxy) resolveAsk(ctx context.Context, st *sessionState, b ToolBinding,
 		Args:      args,
 		Decision:  decision,
 		Timeout:   timeout,
+		Quorum:    decision.Quorum,
 	})
 	if err != nil {
 		return policy.Decision{
@@ -472,4 +495,10 @@ func (p *Proxy) record(st *sessionState, rec *audit.Call) {
 		Shadow:      rec.Shadow,
 		Labels:      rec.Labels,
 	})
+}
+
+// bindingNames are the names a tool goes by: the exposed one and
+// upstream.tool.
+func bindingNames(b ToolBinding) []string {
+	return []string{b.Exposed, b.Upstream + "." + b.Name}
 }

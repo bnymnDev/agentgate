@@ -57,6 +57,9 @@ type Decision struct {
 	// that are not rules — budgets, the loop guard, a freeze — use a fixed id
 	// so that they can still be told apart in the audit log.
 	RuleID string `json:"rule_id,omitempty"`
+	// Quorum is how many people must approve an ask: the rule's quorum.
+	// Zero and one mean one.
+	Quorum int `json:"quorum,omitempty"`
 }
 
 // Labels agentgate itself attaches to a session, next to the ones label
@@ -68,6 +71,9 @@ const (
 	// LabelInjectionSuspected marks a session that got a tool result with
 	// hidden text or instructions addressed to the model.
 	LabelInjectionSuspected = "injection-suspected"
+	// LabelBehaviorAnomaly marks a session in which a tool did something
+	// far outside what it did before.
+	LabelBehaviorAnomaly = "behavior-anomaly"
 )
 
 // Ids used for decisions that do not come from a rule in the rules list.
@@ -86,7 +92,11 @@ const (
 	RuleTaint = "taint"
 	// RuleSampling and RuleElicitation decide a server's request to the
 	// host: to have its model answer something, or to ask the user.
-	RuleSampling    = "sampling"
+	RuleSampling = "sampling"
+	// RuleFlow decides a call that carries data a flow contract forbids.
+	RuleFlow = "flow"
+	// RuleBehavior decides a call that is outside what its tool did before.
+	RuleBehavior    = "behavior"
 	RuleElicitation = "elicitation"
 )
 
@@ -175,6 +185,8 @@ type Budget struct {
 	// TokensPerSession caps the estimated tokens (arguments plus results)
 	// a session may push through its tools. Zero means unlimited.
 	TokensPerSession int `yaml:"tokens_per_session" json:"tokens_per_session,omitempty"`
+	// Money caps spending in a currency; see Money.
+	Money Money `yaml:"money" json:"money,omitzero"`
 }
 
 // LoopGuard stops an agent that is stuck repeating itself.
@@ -192,6 +204,9 @@ type Rule struct {
 	When   Conditions `yaml:"when" json:"when,omitempty"`
 	Action Action     `yaml:"action" json:"action"`
 	Reason string     `yaml:"reason" json:"reason,omitempty"`
+	// Quorum, on an ask rule, is how many different people must approve:
+	// two makes it a two-person rule. Any one of them denying denies.
+	Quorum int `yaml:"quorum" json:"quorum,omitempty"`
 	// Pack names the pack the rule came from; empty for your own rules.
 	Pack string `yaml:"-" json:"pack,omitempty"`
 
@@ -317,6 +332,11 @@ type Counts struct {
 	Repeats int `json:"repeats,omitempty"`
 	// Tokens is the estimated number of tokens spent so far.
 	Tokens int `json:"tokens,omitempty"`
+	// Spent is what the session's calls have cost so far, in the money
+	// budget's currency.
+	Spent float64 `json:"spent,omitempty"`
+	// SpentToday is what every session has spent since local midnight.
+	SpentToday float64 `json:"spent_today,omitempty"`
 }
 
 // Annotations mirror the MCP tool annotations. A nil field means the server
@@ -376,7 +396,7 @@ func Evaluate(p *Policy, call *Call) Decision {
 	}
 	for _, r := range p.Rules {
 		if r.matches(call) {
-			return Decision{Action: r.Action, Reason: r.reason(), RuleID: r.ID}
+			return Decision{Action: r.Action, Reason: r.reason(), RuleID: r.ID, Quorum: r.Quorum}
 		}
 	}
 	def := p.Default
@@ -433,7 +453,7 @@ func checkBudget(b *Budget, call *Call) (Decision, bool) {
 		}
 		break
 	}
-	return Decision{}, false
+	return checkMoney(&b.Money, call)
 }
 
 // matches reports whether the rule applies to call. A rule with neither tool

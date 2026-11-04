@@ -45,6 +45,9 @@ type Config struct {
 	Pinning         Pinning       `yaml:"pinning"`
 	Canaries        Canaries      `yaml:"canaries"`
 	Taint           Taint         `yaml:"taint"`
+	SharedLabels    SharedLabels  `yaml:"shared_labels"`
+	Flows           []Flow        `yaml:"flows"`
+	Behavior        Behavior      `yaml:"behavior"`
 	Telemetry       Telemetry     `yaml:"telemetry"`
 
 	// Path is the file the config was read from. It is not part of the file.
@@ -81,6 +84,23 @@ type Approval struct {
 	Telegram *Telegram `yaml:"telegram"`
 	// Slack puts approvals in a Slack channel, with the same buttons.
 	Slack *Slack `yaml:"slack"`
+	// Passkeys signs approvals given in the web UI with a passkey.
+	Passkeys *Passkeys `yaml:"passkeys"`
+}
+
+// Passkeys makes the web UI's approvals signed ones: each answer is a
+// WebAuthn assertion by an enrolled passkey over the question it answers.
+type Passkeys struct {
+	// Required refuses every approval that is not signed. The terminal, the
+	// phone and the chats cannot sign, so they are not asked; the web UI
+	// must run. Without it, unsigned clicks still count.
+	Required bool `yaml:"required"`
+	// Store is the file the passkeys are kept in; the default is
+	// passkeys.json next to the audit database.
+	Store string `yaml:"store"`
+	// RPID is the relying party: the host name the web UI is opened at.
+	// The default, localhost, works for http://localhost:<port>.
+	RPID string `yaml:"rp_id"`
 }
 
 // Telegram is a bot that asks in a chat. agentgate reads the button presses
@@ -459,6 +479,16 @@ func (c *Config) normalize() error {
 	} else {
 		c.Audit.Path = expanded
 	}
+	if pk := c.Approval.Passkeys; pk != nil {
+		if pk.RPID == "" {
+			pk.RPID = "localhost"
+		}
+		if pk.Store == "" {
+			pk.Store = filepath.Join(filepath.Dir(c.Audit.Path), "passkeys.json")
+		} else if p, err := ExpandPath(pk.Store); err == nil {
+			pk.Store = p
+		}
+	}
 	if c.Audit.Retention == 0 {
 		c.Audit.Retention = Duration(DefaultRetention)
 	}
@@ -543,6 +573,13 @@ func (c *Config) normalize() error {
 		errs = append(errs, err)
 	}
 	if err := c.Canaries.normalize(c.Audit.Path); err != nil {
+		errs = append(errs, err)
+	}
+	errs = append(errs, normalizeFlows(c.Flows)...)
+	if err := c.Behavior.normalize(c.Path); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.SharedLabels.normalize(); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.Taint.normalize(); err != nil {

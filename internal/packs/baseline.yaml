@@ -9,7 +9,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\brm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*|(--recursive|-r)\s+(--force|-f)|(--force|-f)\s+(--recursive|-r))\s+(--no-preserve-root\s+)?["'']?(/|~|\$HOME|\*|\.\.?)/?\*?["'']?(\s|;|&|\||$)'
+        shell_regex: '(?i)\brm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*|(--recursive|-r)\s+(--force|-f)|(--force|-f)\s+(--recursive|-r))\s+(--no-preserve-root\s+)?["'']?(/|~|\$HOME|\*|\.\.?)/?\*?["'']?(\s|;|&|\||$)'
     action: deny
     reason: "recursive force delete of a root, home, current or wildcard path"
 
@@ -17,7 +17,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)(\bmkfs(\.\w+)?\s|\bdd\s+[^;&|]*\bof=/dev/(sd|nvme|hd|disk|mmcblk|xvd)|>\s*/dev/(sd|nvme|hd|disk|xvd)[a-z0-9]*\b|:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:|\bshred\s+[^;&|]*/dev/|\bwipefs\b)'
+        shell_regex: '(?i)(\bmkfs(\.\w+)?\s|\bdd\s+[^;&|]*\bof=/dev/(sd|nvme|hd|disk|mmcblk|xvd)|>\s*/dev/(sd|nvme|hd|disk|xvd)[a-z0-9]*\b|:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:|\bshred\s+[^;&|]*/dev/|\bwipefs\b)'
     action: deny
     reason: "this wipes a disk or forks the machine to death"
 
@@ -25,7 +25,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bch(mod|own|grp)\s+(-[a-z]*R[a-z]*|--recursive)\s+\S+\s+["'']?/["'']?(\s|;|&|\||$)'
+        shell_regex: '(?i)\bch(mod|own|grp)\s+(-[a-z]*R[a-z]*|--recursive)\s+\S+\s+["'']?/["'']?(\s|;|&|\||$)'
     action: deny
     reason: "recursive permission change on the root directory"
 
@@ -33,7 +33,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\b(curl|wget|fetch)\b[^;&]*\|\s*(sudo\s+)?(ba|z|k|da)?sh\b'
+        shell_regex: '(?i)\b(curl|wget|fetch)\b[^;&]*\|\s*(sudo\s+)?(ba|z|k|da)?sh\b'
     action: ask
     reason: "this runs a script straight from the internet"
 
@@ -41,7 +41,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+push\b[^;&|]*\s(-f|--force|--force-with-lease)\b[^;&|]*\b(main|master)\b|\bgit\s+push\b[^;&|]*\b(main|master)\b[^;&|]*\s(-f|--force|--force-with-lease)\b|\bgit\s+push\b[^;&|]*\s\+(main|master)\b'
+        shell_regex: '(?i)\bgit\s+push\b[^;&|]*\s(-f|--force|--force-with-lease)\b[^;&|]*\b(main|master)\b|\bgit\s+push\b[^;&|]*\b(main|master)\b[^;&|]*\s(-f|--force|--force-with-lease)\b|\bgit\s+push\b[^;&|]*\s\+(main|master)\b'
     action: deny
     reason: "force-pushing main rewrites history everyone else has"
 
@@ -49,7 +49,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+push\b[^;&|]*\s(-f|--force|--force-with-lease)\b'
+        shell_regex: '(?i)\bgit\s+push\b[^;&|]*\s(-f|--force|--force-with-lease)\b'
     action: ask
     reason: "a force-push rewrites history on the remote"
 
@@ -57,7 +57,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--\s+\.|restore\s+(--staged\s+)?\.(\s|$)|stash\s+(drop|clear))'
+        shell_regex: '(?i)\bgit\s+(reset\s+--hard|clean\s+-[a-z]*f|checkout\s+--\s+\.|restore\s+(--staged\s+)?\.(\s|$)|stash\s+(drop|clear))'
     action: ask
     reason: "this throws away uncommitted work"
 
@@ -65,22 +65,22 @@ rules:
     tool: "*"
     when:
       "args.{sql,query,statement,command,cmd}":
-        regex: '(?i)\b(drop\s+(table|database|schema|view|index|user|role)|truncate\s+(table\s+)?[\w."`]+)'
+        sql_regex: '(?i)\b(drop\s+(table|database|schema|view|index|user|role)|truncate\s+(table\s+)?[\w."`]+)'
     action: deny
     reason: "dropping or truncating is not for agents"
 
   - id: sql-delete-everything
     tool: "*"
     when:
-      - "args.{sql,query,statement}": { regex: '(?i)\bdelete\s+from\b' }
-      - "args.{sql,query,statement}": { not_regex: '(?i)\bwhere\b' }
+      - "args.{sql,query,statement}": { sql_regex: '(?i)\bdelete\s+from\b' }
+      - "args.{sql,query,statement}": { not_sql_regex: '(?i)\bwhere\b' }
     action: deny
     reason: "a DELETE without a WHERE clause empties the table"
 
   - id: sql-update-everything
     tool: "*"
     when:
-      - "args.{sql,query,statement}": { regex: '(?i)\bupdate\s+[\w."`]+\s+set\b' }
-      - "args.{sql,query,statement}": { not_regex: '(?i)\bwhere\b' }
+      - "args.{sql,query,statement}": { sql_regex: '(?i)\bupdate\s+[\w."`]+\s+set\b' }
+      - "args.{sql,query,statement}": { not_sql_regex: '(?i)\bwhere\b' }
     action: deny
     reason: "an UPDATE without a WHERE clause rewrites every row"

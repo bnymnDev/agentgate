@@ -20,9 +20,11 @@ import (
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
+	"github.com/bnymnDev/agentgate/internal/passkey"
 	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
 	"github.com/bnymnDev/agentgate/internal/proxy"
+	"github.com/bnymnDev/agentgate/internal/replay"
 )
 
 //go:embed templates/*.html
@@ -62,9 +64,17 @@ type Options struct {
 	Freeze   func(reason, by string) error
 	Unfreeze func() error
 	// Tools shows and trusts tools; nil when no proxy runs behind the UI.
-	Tools   ToolSource
-	Logger  *slog.Logger
-	Version string
+	Tools ToolSource
+	// Replay re-evaluates a recorded session under the policy in force, for
+	// the time-travel page. Nil uses the policy alone, without the tool
+	// annotations and result labels the CLI adds.
+	Replay func(ctx context.Context, sess *audit.Session, calls []*audit.Call) (*replay.Report, error)
+	// Passkeys signs approvals; nil means approvals are plain clicks.
+	// PasskeysRequired refuses a click that is not signed.
+	Passkeys         *passkey.Service
+	PasskeysRequired bool
+	Logger           *slog.Logger
+	Version          string
 }
 
 // Server renders the UI.
@@ -85,7 +95,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{opts: opts, log: opts.Logger, tmpl: map[string]*template.Template{}}
 	// Every page is parsed together with the layout, which is how html/template
 	// wants overriding blocks to be set up.
-	for _, page := range []string{"sessions", "session", "call", "policy", "approvals", "live", "tools"} {
+	for _, page := range []string{"sessions", "session", "call", "policy", "approvals", "live", "tools", "travel", "passkeys"} {
 		t, err := template.New("layout.html").Funcs(funcs()).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html")
 		if err != nil {
@@ -104,6 +114,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleSessions)
 	mux.HandleFunc("GET /partials/sessions", s.handleSessionsPartial)
 	mux.HandleFunc("GET /sessions/{id}", s.handleSession)
+	mux.HandleFunc("GET /sessions/{id}/travel", s.handleTravel)
 	mux.HandleFunc("GET /partials/calls", s.handleCallsPartial)
 	mux.HandleFunc("GET /calls/{id}", s.handleCall)
 	mux.HandleFunc("GET /policy", s.handlePolicy)
@@ -112,6 +123,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /approvals", s.handleApprovals)
 	mux.HandleFunc("GET /partials/approvals", s.handleApprovalsPartial)
 	mux.HandleFunc("POST /approvals/{id}/{verb}", s.handleApprovalDecide)
+	mux.HandleFunc("POST /approvals/{id}/{verb}/begin", s.handleSignBegin)
+	mux.HandleFunc("POST /approvals/{id}/{verb}/finish", s.handleSignFinish)
+	mux.HandleFunc("GET /passkeys", s.handlePasskeys)
+	mux.HandleFunc("POST /passkeys/enroll/begin", s.handleEnrollBegin)
+	mux.HandleFunc("POST /passkeys/enroll/finish", s.handleEnrollFinish)
 	mux.HandleFunc("GET /live", s.handleLive)
 	mux.HandleFunc("GET /partials/live", s.handleLivePartial)
 	mux.HandleFunc("GET /tools", s.handleTools)

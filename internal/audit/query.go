@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -419,3 +420,57 @@ func escapeLike(s string) string {
 }
 
 func likePrefix(s string) string { return escapeLike(s) + "%" }
+
+// Forwarded is one call that reached its upstream, as much as a price list
+// needs to know about it.
+type Forwarded struct {
+	Upstream  string
+	Tool      string
+	TokensEst int
+	TS        time.Time
+}
+
+// ForwardedSince lists the calls that reached their upstream at or after
+// since — allowed ones, and the ones shadow mode let through.
+func (s *Store) ForwardedSince(ctx context.Context, since time.Time) ([]Forwarded, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT upstream, tool, tokens_est, ts FROM calls
+		WHERE ts >= ? AND (decision = ? OR shadow = 1) ORDER BY ts`, since.UnixMilli(), string(policy.ActionAllow))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Forwarded
+	for rows.Next() {
+		var f Forwarded
+		var ts int64
+		if err := rows.Scan(&f.Upstream, &f.Tool, &f.TokensEst, &ts); err != nil {
+			return nil, err
+		}
+		f.TS = time.UnixMilli(ts)
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// LabelsSince returns, for every label earned at or after since, the
+// sessions that earned it.
+func (s *Store) LabelsSince(ctx context.Context, since time.Time) (map[string][]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT session_id, labels FROM calls WHERE ts >= ? AND labels != ''`, since.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var sess, labels string
+		if err := rows.Scan(&sess, &labels); err != nil {
+			return nil, err
+		}
+		for _, l := range strings.Split(labels, ",") {
+			if l != "" && !slices.Contains(out[l], sess) {
+				out[l] = append(out[l], sess)
+			}
+		}
+	}
+	return out, rows.Err()
+}

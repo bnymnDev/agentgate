@@ -91,7 +91,11 @@ func Publish(dir string, e Entry) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(file), 0o750); err != nil {
 		return "", err
 	}
-	return file, os.WriteFile(file, e.Marshal(), 0o644) //nolint:gosec // a registry is meant to be read
+	content := e.Marshal()
+	if err := os.WriteFile(file, content, 0o644); err != nil { //nolint:gosec // a registry is meant to be read
+		return "", err
+	}
+	return file, appendLog(dir, rel, e, content)
 }
 
 // ErrNotInRegistry is returned when a registry has no entry for a server
@@ -126,6 +130,11 @@ func LoadEntry(ctx context.Context, source, server, version string, client *http
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", server, version, err)
+	}
+	if !isURL(where) && !strings.HasSuffix(source, ".json") {
+		if err := loggedAs(source, where, raw); err != nil {
+			return nil, err
+		}
 	}
 	var e Entry
 	if err := json.Unmarshal(raw, &e); err != nil {
@@ -218,4 +227,31 @@ func Compare(here []Definition, there *Entry) []Comparison {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Ref < out[j].Ref })
 	return out
+}
+
+// loggedAs checks an entry against the registry's log, when it keeps one:
+// the entry must be what the log last recorded for its path.
+func loggedAs(dir, file string, content []byte) error {
+	raw, err := os.ReadFile(filepath.Join(dir, logFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	recs, _, err := readLog(raw)
+	if err != nil {
+		return err
+	}
+	rel, _ := filepath.Rel(dir, file)
+	rel = filepath.ToSlash(rel)
+	for i := len(recs) - 1; i >= 0; i-- {
+		if recs[i].Path == rel {
+			if recs[i].Hash != fileHash(content) {
+				return fmt.Errorf("%s is not what the registry's log recorded for it; it was changed without being published", rel)
+			}
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is not in the registry's log; it was added by hand", rel)
 }

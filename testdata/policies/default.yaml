@@ -38,21 +38,23 @@ policy:
     - id: no-destructive-shell
       tool: "shell.*"
       when:
-        args.command: { regex: '\brm\s+-rf|\bgit\s+push\s+--force|\bcurl\b.*\|\s*sh\b' }
+        # shell_regex matches what the shell runs, so "rm", r''m and
+        # rm -r -f are all rm -rf; agentgate fuzz checks it.
+        args.command: { shell_regex: '\brm\s+(-[a-z]*r[a-z]*\s+)*-[a-z]*(rf|fr)|\brm\s+(-[a-z]*\s+)*(-r\s+-f|-f\s+-r)|\bgit\s+push\s+(.*\s)?(--force|-f\b)|\bcurl\b.*\|\s*(ba)?sh\b' }
       action: deny
       reason: "destructive shell command"
 
     - id: fs-stay-in-repo
       tool: "fs.write_file"
       when:
-        args.path: { not_prefix: "/home/me/repo/" }
+        args.path: { not_path_prefix: "/home/me/repo/" }
       action: deny
       reason: "writes are confined to the repository"
 
     - id: no-sql-that-loses-data
       tool: "db.query"
       when:
-        args.sql: { regex: '(?i)\b(drop|truncate|delete\s+from)\b' }
+        args.sql: { sql_regex: '(?i)\b(drop|truncate|delete\s+from)\b' }
       action: deny
       reason: "queries that destroy data are not for agents"
 

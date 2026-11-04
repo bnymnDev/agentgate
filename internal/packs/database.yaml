@@ -8,7 +8,7 @@ rules:
     tool: "*"
     when:
       "args.{sql,query,statement}":
-        regex: '(?i)(^|;)\s*(alter|create|grant|revoke|comment\s+on|reindex|cluster|rename)\b'
+        sql_regex: '(?i)(^|;)\s*(alter|create|grant|revoke|comment\s+on|reindex|cluster|rename)\b'
     action: ask
     reason: "this changes the schema or permissions"
 
@@ -16,6 +16,6 @@ rules:
     tool: "*"
     when:
       "args.{sql,query,statement}":
-        regex: '(?i)\b(insert\s+into|update\s+[\w."`]+\s+set|delete\s+from|merge\s+into|upsert|replace\s+into|copy\s+[\w."`]+\s+from|load\s+data)\b'
+        sql_regex: '(?i)\b(insert\s+into|update\s+[\w."`]+\s+set|delete\s+from|merge\s+into|upsert|replace\s+into|copy\s+[\w."`]+\s+from|load\s+data)\b'
     action: ask
     reason: "this writes to the database"

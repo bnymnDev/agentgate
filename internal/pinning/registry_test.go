@@ -75,7 +75,9 @@ func TestPublishLoadCompare(t *testing.T) {
 	edited, _ := json.Marshal(raw)
 	require.NoError(t, os.WriteFile(file, edited, 0o600))
 	_, err = LoadEntry(ctx, dir, "@scope/fs", "1.0.0", nil)
-	require.ErrorContains(t, err, "edited by hand")
+	require.ErrorContains(t, err, "changed without being published", "the registry's log notices first")
+	_, err = LoadEntry(ctx, file, "", "", nil)
+	require.ErrorContains(t, err, "edited by hand", "a single file is checked against its own hashes")
 }
 
 func TestLoadEntryOverHTTP(t *testing.T) {

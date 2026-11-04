@@ -35,6 +35,8 @@ type Options struct {
 	// catalog a call was made under, keyed by exposed tool name, for
 	// annotations.* conditions. Nil means nothing is known.
 	Annotations func(catalogHash string) map[string]policy.Annotations
+	// Until stops the replay after this many calls; zero replays them all.
+	Until int
 	// ResultLabels returns the labels agentgate itself attaches for a
 	// result (canary-read, injection-suspected), so a replayed session
 	// picks them up where the live one did. Nil attaches none.
@@ -61,6 +63,17 @@ type Entry struct {
 	// Labels are the labels the session earns with this call under the
 	// current policy.
 	Labels []string `json:"labels,omitempty"`
+	// State is the session as it stands after this call, under the current
+	// policy: what a time-travelling debugger shows at each step.
+	State State `json:"state"`
+}
+
+// State is a session at one point of a replay.
+type State struct {
+	Labels []string `json:"labels,omitempty"`
+	Called []string `json:"called,omitempty"`
+	Calls  int      `json:"calls"`
+	Tokens int      `json:"tokens"`
 }
 
 // DecisionChanged reports whether the current policy disagrees with what was
@@ -132,7 +145,10 @@ func Run(ctx context.Context, sessionID string, calls []*audit.Call, opts Option
 	report := &Report{SessionID: sessionID, DryRun: opts.Forwarder == nil}
 	var track policy.Tracker
 
-	for _, rec := range calls {
+	for i, rec := range calls {
+		if opts.Until > 0 && i >= opts.Until {
+			break
+		}
 		if err := ctx.Err(); err != nil {
 			return report, err
 		}
@@ -194,6 +210,8 @@ func Run(ctx context.Context, sessionID string, calls []*audit.Call, opts Option
 			track.Forwarded(call, rec.TokensEst, rec.TS)
 			entry.Labels = track.Earn(labels...)
 		}
+		h := track.History()
+		entry.State = State{Labels: h.Labels, Called: h.Called, Calls: track.Calls(), Tokens: track.Tokens()}
 		report.Entries = append(report.Entries, entry)
 	}
 	return report, nil

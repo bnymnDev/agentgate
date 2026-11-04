@@ -33,6 +33,8 @@ approval:
     app_token: ${SLACK_APP_TOKEN}   # xapp-, Socket Mode
     channel: C0123456789
     approvers: [U0123456789]
+  passkeys:                      # optional: approvals in the web UI are signed
+    required: true               # nothing unsigned can approve
 
 audit:
   enabled: true
@@ -85,6 +87,22 @@ pinning:
   lockfile: agentgate.lock       # default: next to this file, same name
   registry: ./mcp-registry       # optional: check first sights against trusted definitions
 
+shared_labels:                   # labels every session on the machine shares
+  labels: [untrusted-content, private-data]
+  within: 30m
+
+flows:                           # what read from one tool may not go to another
+  - id: no-issues-in-slack
+    from: ["github.*"]
+    to: ["slack.post*"]
+    action: deny                 # deny | ask | warn
+
+behavior:                        # compare calls with what the tool did before
+  profile: agentgate.behavior.json
+  mode: warn                     # off | warn | ask | deny
+  min_calls: 20
+  factor: 4
+
 taint:
   mode: warn                     # off | warn | ask | deny
   labels: [private-data]         # results of calls with these labels are private
@@ -117,6 +135,12 @@ policy:
     tokens_per_session: 200000
     calls_per_tool:
       fs.write_file: 50
+    money:                       # spending, in a currency
+      currency: EUR
+      per_million_tokens: 3.00   # tokens through tools
+      per_call: { "search.*": 0.01 }   # paid tools
+      per_session: 2.00
+      per_day: 20.00             # every session on the machine together
   loop_guard:
     repeats: 10
   rules: []                      # see docs/policies.md
@@ -200,6 +224,12 @@ buttons are replaced by the outcome everywhere.
 | `api` | `https://slack.com/api` | |
 
 `agentgate doctor` checks both tokens.
+
+| `approval.passkeys` | Default | What it does |
+|---|---|---|
+| `required` | `false` | Refuse every approval that is not signed with an enrolled passkey. No other channel is asked, and the web UI must run. |
+| `store` | `passkeys.json` next to the audit database | Where the enrolled passkeys are kept. |
+| `rp_id` | `localhost` | The host name the web UI is opened at. Browsers do not offer passkeys on a bare IP address: open `http://localhost:<port>`. |
 
 Every channel offers three answers:
 
@@ -381,6 +411,45 @@ See [policies.md](policies.md). The fields that are not rules:
 | `labels` | *(none)* | Label rules. |
 | `budget`, `loop_guard` | *(off)* | Hard stops before the rules. |
 
+| `policy.budget.money` | Default | What it does |
+|---|---|---|
+| `currency` | `EUR` | A label for the amounts. |
+| `per_million_tokens` | `0` | The price of a million tokens of tool arguments and results — what the model reads. |
+| `per_call` | *(none)* | Tool patterns to the price of one call, for paid APIs. The first pattern in name order that matches wins. |
+| `per_session` | unlimited | A call the session cannot pay for is denied before it is made. |
+| `per_day` | unlimited | The same for everything every session spent since local midnight, read from the shared audit log. |
+
+`agentgate bill --month 2026-11` prices a month per day and per tool.
+
+## `shared_labels`
+
+| Field | Default | What it does |
+|---|---|---|
+| `labels` | *(none)* | Labels that, once one session earns them, count for every session on the machine. |
+| `within` | `30m` | For how long. A label passed on is not passed on again. |
+
+## `flows`
+
+Each entry is a contract about where data may go. See
+[guardrails.md](guardrails.md#data-flow-contracts).
+
+| Field | Default | What it does |
+|---|---|---|
+| `id` | required | Names the contract in decisions (rule id `flow`). |
+| `from` | required | Sources: tool globs over `upstream.tool` or the exposed name, or `label:<name>` for the results of calls that earned a label. |
+| `to` | required | Sinks, as tool globs. |
+| `action` | `deny` | `deny`, `ask`, or `warn` to report and let through. |
+| `reason` | a generated one | What the agent and the log are told. |
+
+## `behavior`
+
+| Field | Default | What it does |
+|---|---|---|
+| `profile` | *(off)* | The profile `agentgate behavior learn` writes. Relative to the config. |
+| `mode` | `warn` | What a call with an argument the tool never took does: `warn`, `ask`, `deny`. What a call returned is always only reported, and labels the session `behavior-anomaly`. |
+| `min_calls` | `20` | Calls a tool needs in the profile before it is compared. |
+| `factor` | `4` | How many times its usual 95th percentile a result size or duration may be. |
+
 ## The kill switch marker
 
 `agentgate freeze` writes a marker file next to the audit database —
@@ -403,6 +472,27 @@ config checks for it on every call. `agentgate status` prints the path.
 |---|---|---|
 | `--json` | print the statement and results as JSON |  |
 | `--to` | a destination; repeatable, replaces audit.anchor.to |  |
+
+### `behavior check [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--profile` | the profile; default behavior.profile, or next to the config |  |
+| `--since` | how much of the audit log to check | `1d` |
+
+### `behavior learn [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--since` | how much of the audit log to learn from | `14d` |
+| `-o, --output` | where to write the profile; default behavior.profile, or next to the config |  |
+
+### `bill [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print the bill as JSON |  |
+| `--month` | the month, as YYYY-MM; default this one |  |
 
 ### `canary list [flags]`
 
@@ -454,6 +544,14 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--json` | print the checks as JSON |  |
 | `--offline` | do not start the upstream servers or reach out to the network |  |
 
+### `fuzz [test-file] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print the report as JSON |  |
+| `--markdown` | print the report as Markdown |  |
+| `--run` | only fuzz the tests whose name matches this regex |  |
+
 ### `init [flags]`
 
 | Flag | What it does | Default |
@@ -503,6 +601,32 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--session` | learn from one session instead (id or prefix) |  |
 | `--since` | window to learn from, e.g. 24h, 7d; empty for everything | `7d` |
 
+### `probe [-- command [args...]] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--arg` | arguments for a tool, as tool={"json":"object"}, instead of made-up ones (repeatable) |  |
+| `--env` | an environment variable for the server, as NAME=value (repeatable) |  |
+| `--header` | a header for --http, as "Name: value" (repeatable) |  |
+| `--http` | probe the Streamable HTTP server at this URL |  |
+| `--json` | print the report as JSON |  |
+| `--timeout` | how long one call may take | `30s` |
+| `--tool` | call only these tools, read-only or not: globs over tool or upstream.tool (repeatable) |  |
+| `--webhook` | POST the report as JSON here when something is found (an ntfy topic URL works) |  |
+
+### `registry head <dir|url> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--to` | send the head here too: https://…, file:<path> or ots:<dir> (repeatable) |  |
+
+### `registry verify <dir|url> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--head` | a head noted earlier, as size:root, that the log must still start with |  |
+| `--json` | print the report as JSON |  |
+
 ### `replay <session-id> [flags]`
 
 | Flag | What it does | Default |
@@ -510,6 +634,7 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--dry-run` | only re-evaluate the policy, send nothing |  |
 | `--json` | print the report as JSON |  |
 | `--only-allowed` | skip calls that were denied when they were recorded |  |
+| `--until` | stop after this many calls and show the session as it stood then | `0` |
 
 ### `report <session-id | last> [flags]`
 

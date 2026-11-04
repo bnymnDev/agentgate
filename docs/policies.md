@@ -45,7 +45,9 @@ a call to a tool pinning has quarantined (`quarantine`). See
 
 A call that carries a value the session read from a private result out is
 checked after the rules, by [taint tracking](guardrails.md#taint-tracking),
-and the stricter of the two decisions wins (rule id `taint`). Requests a
+and the stricter of the two decisions wins (rule id `taint`); so do
+[data-flow contracts](guardrails.md#data-flow-contracts) (`flow`) and a
+[behaviour profile](guardrails.md#behaviour-pinning) (`behavior`). Requests a
 server makes of the host — sampling and elicitation — are decided by
 `policy.sampling` and `policy.elicitation` (rule ids `sampling` and
 `elicitation`), not by tool rules.
@@ -172,6 +174,9 @@ Friday.
 | `not_regex` | the value does not match this regular expression | <code>args.sql: { not_regex: '(?i)\bwhere\b' }</code> |
 | `prefix` | the value starts with this string | <code>args.path: { prefix: "/etc/" }</code> |
 | `not_prefix` | the value does not start with this string | <code>args.path: { not_prefix: "/srv/app/" }</code> |
+| `shell_regex`, `not_shell_regex` | like `regex`, on the command as a shell reads it: quotes join (`"rm"`, `r''m` are `rm`), escapes and `$IFS` are undone, blanks collapse | <code>args.command: { shell_regex: '\brm\s+-rf' }</code> |
+| `sql_regex`, `not_sql_regex` | like `regex`, on the statement as a database reads it: comments are spaces, whitespace collapses | <code>args.sql: { sql_regex: '(?i)\bdelete\s+from\b' }</code> |
+| `path_prefix`, `not_path_prefix` | the path, with `.` and `..` resolved, is inside this directory (or is it) | <code>args.path: { not_path_prefix: "/srv/app" }</code> |
 | `in` | the value is one of these | <code>args.env: { in: ["prod", "staging"] }</code> |
 | `gt`, `lt` | the value is a number above / below this; both may be combined | <code>args.amount: { gt: 10, lt: 100 }</code> |
 | `exists` | the path is present (`true`) or absent (`false`) | <code>args.dryRun: { exists: false }</code> |
@@ -198,6 +203,22 @@ into a range.
   are rendered as JSON, so you can point a regex at a whole subtree.
 - **Objects and arrays** compare by their canonical JSON, so `equals` works on
   nested structures.
+
+`regex` sees a value as it was written, and that is rarely how it is read. To
+a shell, `"rm"`, `r''m` and `\rm` are all `rm`; to a database `DELETE/**/FROM`
+is `DELETE FROM`; to a file system `/repo/../etc/passwd` is `/etc/passwd`.
+A rule about what a value does should use the matcher that reads it like its
+reader:
+
+```yaml
+when:
+  args.command: { shell_regex: '\brm\s+-[a-z]*r' }   # quotes join, escapes and $IFS undone
+  args.sql: { sql_regex: '(?i)\bdelete\s+from\b' }  # comments are spaces
+  args.path: { not_path_prefix: /home/me/repo }      # . and .. resolved
+```
+
+The built-in packs do. `agentgate fuzz` finds the rules that do not — see
+[fuzzing a policy](#fuzzing-a-policy).
 
 ### A missing path
 
@@ -440,6 +461,23 @@ means unlimited.
 A call over budget is denied with a reason of the form
 `budget: limit of 50 calls for fs.write_file reached` and the rule id `budget`.
 
+### Money
+
+```yaml
+budget:
+  money:
+    per_million_tokens: 3.00        # what the model reads costs
+    per_call: { "search.*": 0.01, "images.generate": 0.04 }
+    per_session: 2.00
+    per_day: 20.00                  # every session on the machine together
+```
+
+Tokens through tools and paid tools are priced, and a call the session or the
+day cannot pay for is denied before it is made — `budget: this call costs
+0.04 EUR and only 0.02 EUR of the session budget is left`. The day is read
+back from the audit log every gateway writes to, so it counts every agent on
+the machine. `agentgate bill` prices a month per day and per tool.
+
 ## Loop guard
 
 ```yaml
@@ -477,6 +515,25 @@ call or the tool for the rest of the session; either way the rule that asked is
 what the audit log records.
 
 `default: ask` is rejected: a default has to be a decision.
+
+### The two-person rule
+
+```yaml
+- id: production-deploys
+  tool: "shell.deploy"
+  action: ask
+  quorum: 2
+  reason: "a production deploy needs two people"
+```
+
+`quorum: 2` waits for two different people to allow the call; anyone denying
+denies it at once. The question goes to every channel. A chat counts every
+person in it once, so two people in one Slack channel or Telegram group are a
+quorum; in the web UI with [passkeys](guardrails.md#signed-approvals) every
+passkey is a person; the terminal, an unsigned web UI click and the phone
+count as one each. If the quorum does not gather before the timeout, the
+call is denied with how far it got: `approval timed out with 1 of 2
+approvals`.
 
 ## Testing a policy
 
@@ -623,6 +680,38 @@ anything that does not print is written as an escape, so a test file never
 hides what its calls carry. Calls stopped by a honeypot, a canary, tool
 pinning or the kill switch are left out as comments: they were never the
 policy's to decide.
+
+### Fuzzing a policy
+
+A test that a call is denied proves the rule matches that spelling of it.
+`agentgate fuzz` tries the others:
+
+```sh
+agentgate fuzz                 # the tests next to the config
+```
+
+```
+BYPASS  rm -rf is denied  (shell.exec, command)
+        short flags split: allow instead of deny
+        "rm -r -f /"
+BYPASS  writes stay in the repository  (fs.write_file, path)
+        an allowed directory, then .. back out: allow instead of deny
+        "/home/me/repo/../../../etc/passwd"
+
+37 variants of 7 tests that must stop a call; 2 got through
+```
+
+Every test that expects `deny` or `ask` is turned into variants that mean the
+same to whoever reads the value: a command run through `env`, `command`,
+`sh -c` or `bash -c`, after another command or on a second line, with doubled
+blanks, its flags split or swapped, its name quoted, escaped or given by full
+path; SQL in lower case, split by comments or newlines, behind a comment line
+or a harmless statement; a path with `./`, `//`, a detour through `..`, or a
+climb out of a directory another test allows; a URL with the host in
+capitals, a trailing dot, an explicit port or user info in front. Decisions
+the session makes — the loop guard, a budget, the kill switch — are not
+fuzzed. A variant that gets a weaker decision is a bypass, and `fuzz` exits 1,
+so it guards a policy in CI next to `agentgate test`.
 
 The policy engine's own test suite is a set of golden files:
 `testdata/policies/*.yaml` plus `testdata/calls/*.json` produce

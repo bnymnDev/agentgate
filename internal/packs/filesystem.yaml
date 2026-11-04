@@ -16,7 +16,7 @@ rules:
     when:
       - tool_name: { regex: '(?i)(write|edit|create|move|rename|delete|remove|append|patch|replace|mkdir|copy|upload|save)' }
       - "args.{path,file_path,filePath,destination,target,dest,new_path,newPath,to}": { regex: '^(/|~|[A-Za-z]:[\\/])' }
-      - "args.{path,file_path,filePath,destination,target,dest,new_path,newPath,to}": { not_prefix: "{{workspace}}/" }
+      - "args.{path,file_path,filePath,destination,target,dest,new_path,newPath,to}": { not_path_prefix: "{{workspace}}" }
     action: deny
     reason: "writes are confined to {{workspace}}"
 

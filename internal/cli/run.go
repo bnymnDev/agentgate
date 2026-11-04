@@ -210,6 +210,16 @@ func buildApprover(ctx context.Context, cfg *config.Config, inbox *proxy.Inbox, 
 			go phone.Run(ctx)
 		}
 	}
+	// Only the web UI can sign an answer; with signatures required, nobody
+	// else is asked.
+	if pk := cfg.Approval.Passkeys; pk != nil && pk.Required && cfg.Approval.Mode != "deny" {
+		if !uiRunning {
+			log.Warn("approval.passkeys.required needs the web UI, which is not running; ask rules will deny")
+			return proxy.DenyApprover{Reason: "approval required, signed with a passkey in the web UI, which is not running"}
+		}
+		log.Info("approvals are asked in the web UI and must be signed with a passkey", "passkeys", pk.Store)
+		return inbox
+	}
 	switch cfg.Approval.Mode {
 	case "deny":
 		return proxy.DenyApprover{Reason: "approval required, approvals are disabled (approval.mode: deny)"}
@@ -282,10 +292,17 @@ func buildUIServer(opts runOptions, cfg *config.Config, store *audit.Store, inbo
 	if store == nil {
 		return nil, errors.New("the web UI needs the audit store, but auditing is disabled in the config")
 	}
+	keys, err := passkeyService(cfg, opts.uiAddr)
+	if err != nil {
+		return nil, err
+	}
 	srv, err := ui.New(ui.Options{
-		Store:     store,
-		Config:    p.Config,
-		Approvals: inbox,
+		Store:            store,
+		Config:           p.Config,
+		Replay:           uiReplay(store, p.Config),
+		Approvals:        inbox,
+		Passkeys:         keys,
+		PasskeysRequired: cfg.Approval.Passkeys != nil && cfg.Approval.Passkeys.Required,
 		Reload: func() (*config.Config, error) {
 			fresh, err := config.Load(cfg.Path)
 			if err != nil {

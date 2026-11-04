@@ -1,0 +1,53 @@
+{{define "content"}}
+<hgroup>
+  <h1>Time travel <code>{{short .Session.ID}}</code></h1>
+  <p>Step through the session call by call. Each step shows what was decided then and what the policy in force now decides, and the session as it stood after the call.</p>
+</hgroup>
+{{if not .Entries}}
+<article><p>This session has no calls.</p></article>
+{{else}}
+<div id="travel">
+<form hx-get="/sessions/{{.Session.ID}}/travel" hx-target="#travel" hx-select="#travel" hx-swap="outerHTML" hx-trigger="input changed delay:60ms" hx-push-url="true">
+  <label>Call {{.Number}} of {{len .Entries}}
+    <input type="range" name="step" min="0" max="{{.Last}}" value="{{.Step}}" aria-label="Call">
+  </label>
+  <noscript><button type="submit">Go</button></noscript>
+</form>
+<div class="travel-steps" role="navigation" aria-label="Calls">
+  {{range $i, $e := .Entries}}<a href="/sessions/{{$.Session.ID}}/travel?step={{$i}}" class="step {{$e.Now.Action}}{{if $e.DecisionChanged}} changed{{end}}{{if eq $i $.Step}} here{{end}}" title="{{$i}} {{$e.Call.Tool}}: {{$e.Was.Action}}{{if $e.DecisionChanged}} → {{$e.Now.Action}}{{end}}"></a>{{end}}
+</div>
+<p class="muted"><small>{{.Changed}} of {{len .Entries}} calls get a different decision from the policy in force now. A ringed step is one of them.</small></p>
+{{with .Current}}
+<article class="travel-step {{.Now.Action}}">
+  <header>
+    <code class="tool">{{.Call.Tool}}</code>
+    <small class="muted">{{ts .Call.TS}}</small>
+    {{if gt $.Step 0}}<a href="/sessions/{{$.Session.ID}}/travel?step={{$.Prev}}">previous</a>{{end}}
+    {{if lt $.Step $.Last}}<a href="/sessions/{{$.Session.ID}}/travel?step={{$.Next}}">next</a>{{end}}
+  </header>
+  <div class="grid">
+    <div>
+      <h6>Then</h6>
+      <p><span class="badge {{.Was.Action}}">{{.Was.Action}}</span> {{if .Was.RuleID}}<small class="muted">rule {{.Was.RuleID}}</small>{{end}}</p>
+      {{if .Was.Reason}}<p class="reason">{{.Was.Reason}}</p>{{end}}
+    </div>
+    <div>
+      <h6>Now</h6>
+      <p><span class="badge {{.Now.Action}}">{{.Now.Action}}</span> {{if .Now.RuleID}}<small class="muted">rule {{.Now.RuleID}}</small>{{end}}{{if .DecisionChanged}} <span class="badge ask">changed</span>{{end}}</p>
+      {{if .Now.Reason}}<p class="reason">{{.Now.Reason}}</p>{{end}}
+    </div>
+  </div>
+  <h6>The session after this call</h6>
+  <p>Calls through so far: {{.State.Calls}}, about {{tokens .State.Tokens}} tokens.
+    {{if .State.Labels}}Labels: {{range .State.Labels}}<span class="badge label">{{.}}</span> {{end}}{{else}}No labels yet.{{end}}
+    {{if .Labels}}<br><small class="muted">Earned with this call: {{range .Labels}}+{{.}} {{end}}</small>{{end}}</p>
+  <h6>Arguments</h6>
+  <pre><code>{{pretty .Call.Args}}</code></pre>
+  <h6>Result</h6>
+  <pre><code>{{pretty .Call.Result}}</code></pre>
+</article>
+{{end}}
+</div>
+{{end}}
+<p><a href="/sessions/{{.Session.ID}}">← the session</a></p>
+{{end}}

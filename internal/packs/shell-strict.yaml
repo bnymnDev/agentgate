@@ -24,7 +24,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)(^|[;&|]\s*|\s)(shutdown|reboot|halt|poweroff|init\s+[06])(\s|;|&|$)'
+        shell_regex: '(?i)(^|[;&|]\s*|\s)(shutdown|reboot|halt|poweroff|init\s+[06])(\s|;|&|$)'
     action: deny
     reason: "an agent does not turn the machine off"
 
@@ -32,7 +32,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(^|[;&|(]\s*|\s)(sudo|doas|pkexec)\s'
+        shell_regex: '(^|[;&|(]\s*|\s)(sudo|doas|pkexec)\s'
     action: ask
     reason: "this runs with root privileges"
 
@@ -40,7 +40,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\b(apt(-get)?\s+(install|remove|purge)|yum\s+(install|remove)|dnf\s+(install|remove)|apk\s+add|pacman\s+-S|brew\s+(install|uninstall)|npm\s+(i|install|uninstall)\s+(-g|--global)|snap\s+install|choco\s+install|winget\s+install)\b'
+        shell_regex: '(?i)\b(apt(-get)?\s+(install|remove|purge)|yum\s+(install|remove)|dnf\s+(install|remove)|apk\s+add|pacman\s+-S|brew\s+(install|uninstall)|npm\s+(i|install|uninstall)\s+(-g|--global)|snap\s+install|choco\s+install|winget\s+install)\b'
     action: ask
     reason: "this installs or removes software on the machine"
 
@@ -48,6 +48,6 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)(>>?\s*["'']?(~|\$HOME|/home/[^/\s]+|/root)?/?\.(bashrc|zshrc|profile|bash_profile|zprofile|config/fish/config\.fish)\b|\bcrontab\b|\bsystemctl\s+(enable|start|daemon-reload)|\blaunchctl\s+(load|bootstrap)|/etc/(cron|systemd|init\.d|rc\.local)|authorized_keys)'
+        shell_regex: '(?i)(>>?\s*["'']?(~|\$HOME|/home/[^/\s]+|/root)?/?\.(bashrc|zshrc|profile|bash_profile|zprofile|config/fish/config\.fish)\b|\bcrontab\b|\bsystemctl\s+(enable|start|daemon-reload)|\blaunchctl\s+(load|bootstrap)|/etc/(cron|systemd|init\.d|rc\.local)|authorized_keys)'
     action: ask
     reason: "this makes something run again later, or lets someone back in"

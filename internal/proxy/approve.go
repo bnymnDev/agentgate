@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ type ApprovalRequest struct {
 	Args      json.RawMessage `json:"args,omitempty"`
 	Decision  policy.Decision `json:"decision"`
 	Timeout   time.Duration   `json:"-"`
+	// Quorum is how many different people must approve; see policy.Rule.
+	Quorum int `json:"quorum,omitempty"`
 }
 
 // Verdict is an approver's answer. Session is set when the human chose to
@@ -33,6 +36,11 @@ type ApprovalRequest struct {
 type Verdict struct {
 	policy.Decision
 	Session bool
+	// Who answered, when the channel knows: a chat user name. Channel is
+	// where: "terminal", "web UI", "phone", "Telegram", "Slack". Both are
+	// empty on a verdict nobody gave, such as a timeout.
+	Who     string
+	Channel string
 }
 
 // Approver turns an "ask" into an allow or a deny. An error means the question
@@ -142,13 +150,13 @@ func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict
 		switch answer {
 		case "y", "yes":
 			fmt.Fprintf(t.Out, "  allowed\n")
-			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal"}}, nil
+			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal"}, Channel: "terminal"}, nil
 		case "a", "always":
 			fmt.Fprintf(t.Out, "  allowed for the rest of this session\n")
-			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal for the rest of the session"}, Session: true}, nil
+			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal for the rest of the session"}, Session: true, Channel: "terminal"}, nil
 		}
 		fmt.Fprintf(t.Out, "  denied\n")
-		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the agentgate terminal"}}, nil
+		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the agentgate terminal"}, Channel: "terminal"}, nil
 	}
 }
 
@@ -180,6 +188,10 @@ type pendingApproval struct {
 	Expires   time.Time       `json:"expires"`
 
 	answer chan Verdict
+	// seen is who answered already; approvals counts the allows, for a
+	// quorum.
+	seen      map[string]bool
+	approvals int
 }
 
 // PendingApproval is the read-only view the UI renders.
@@ -188,6 +200,8 @@ type PendingApproval struct {
 	Request   ApprovalRequest
 	CreatedAt time.Time
 	Expires   time.Time
+	// Approvals is how many people allowed it so far, for a quorum.
+	Approvals int
 }
 
 // NewInbox returns an empty approval inbox.
@@ -197,11 +211,18 @@ func NewInbox() *Inbox {
 
 // Approve parks the call until someone answers in the UI or ctx expires.
 func (i *Inbox) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
+	return firstAnswer(ctx, i, req)
+}
+
+// Collect parks the call and passes on every answer until ctx ends, so a
+// quorum can be gathered in the web UI: each passkey counts as a person.
+func (i *Inbox) Collect(ctx context.Context, req ApprovalRequest, out chan<- Verdict) error {
 	entry := &pendingApproval{
 		ID:        newApprovalID(),
 		Request:   req,
 		CreatedAt: time.Now(),
-		answer:    make(chan Verdict, 1),
+		answer:    make(chan Verdict, 16),
+		seen:      map[string]bool{},
 	}
 	if req.Timeout > 0 {
 		entry.Expires = entry.CreatedAt.Add(req.Timeout)
@@ -215,13 +236,25 @@ func (i *Inbox) Approve(ctx context.Context, req ApprovalRequest) (Verdict, erro
 		delete(i.pending, entry.ID)
 		i.mu.Unlock()
 	}()
-
-	select {
-	case v := <-entry.answer:
-		return v, nil
-	case <-ctx.Done():
-		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
+	for {
+		select {
+		case v := <-entry.answer:
+			out <- v
+		case <-ctx.Done():
+			return nil
+		}
 	}
+}
+
+// Request returns a pending approval's request, for signing it.
+func (i *Inbox) Request(id string) (ApprovalRequest, bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	e, ok := i.pending[id]
+	if !ok {
+		return ApprovalRequest{}, false
+	}
+	return e.Request, true
 }
 
 // Pending lists the waiting approvals, oldest first.
@@ -230,7 +263,7 @@ func (i *Inbox) Pending() []PendingApproval {
 	defer i.mu.Unlock()
 	out := make([]PendingApproval, 0, len(i.pending))
 	for _, e := range i.pending {
-		out = append(out, PendingApproval{ID: e.ID, Request: e.Request, CreatedAt: e.CreatedAt, Expires: e.Expires})
+		out = append(out, PendingApproval{ID: e.ID, Request: e.Request, CreatedAt: e.CreatedAt, Expires: e.Expires, Approvals: e.approvals})
 	}
 	for a := 0; a < len(out); a++ {
 		for b := a + 1; b < len(out); b++ {
@@ -255,24 +288,53 @@ const (
 	ChoiceDeny Choice = "deny"
 )
 
-// Resolve answers a pending approval. It reports false when the id is unknown,
-// which happens when the call already timed out.
+// Resolve answers a pending approval. who names the person when the UI
+// knows them — by their passkey — and is empty for a plain click, which
+// counts as one person however often it comes. It reports false when the id
+// is unknown, which happens when the call already timed out, and when this
+// person answered already.
 func (i *Inbox) Resolve(id string, choice Choice, who string) bool {
+	return i.resolve(id, choice, who, "")
+}
+
+// ResolveSigned answers a pending approval with an answer signed by a
+// passkey: the person is the passkey, evidence is what the audit log keeps
+// of the signature. Each passkey counts once towards a quorum.
+func (i *Inbox) ResolveSigned(id string, choice Choice, passkey, evidence string) bool {
+	return i.resolve(id, choice, "passkey "+strconv.Quote(passkey), evidence)
+}
+
+func (i *Inbox) resolve(id string, choice Choice, who, evidence string) bool {
 	i.mu.Lock()
 	entry, ok := i.pending[id]
+	if ok {
+		key := "web UI\x00" + who
+		if entry.seen[key] {
+			ok = false
+		} else {
+			entry.seen[key] = true
+			if choice != ChoiceDeny {
+				entry.approvals++
+			}
+		}
+	}
 	i.mu.Unlock()
 	if !ok {
 		return false
 	}
-	v := Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected in the agentgate web UI"}}
+	v := Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected in the agentgate web UI"}, Channel: "web UI"}
 	switch choice {
 	case ChoiceAllow:
-		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI"}}
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI"}, Channel: "web UI"}
 	case ChoiceAllowSession:
-		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI for the rest of the session"}, Session: true}
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI for the rest of the session"}, Session: true, Channel: "web UI"}
 	}
 	if who != "" {
 		v.Reason += " by " + who
+		v.Who = who
+	}
+	if evidence != "" {
+		v.Reason += " (" + evidence + ")"
 	}
 	select {
 	case entry.answer <- v:
