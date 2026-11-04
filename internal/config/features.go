@@ -343,3 +343,7 @@ func (t *Taint) normalize() error {
 	}
 	return errors.Join(errs...)
 }
+
+// Normalize checks and completes the pinning settings, for a caller that
+// changed them after the config was loaded.
+func (p *Pinning) Normalize(configPath string) error { return p.normalize(configPath) }

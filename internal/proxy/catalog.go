@@ -430,3 +430,28 @@ func joinErrors(errs []error) error {
 	}
 	return fmt.Errorf("%s", strings.Join(msgs, "; "))
 }
+
+// UpstreamInfo is what an upstream said about itself when it connected.
+type UpstreamInfo struct {
+	Name      string `json:"name"`
+	Transport string `json:"transport"`
+	Server    string `json:"server,omitempty"`
+	Version   string `json:"version,omitempty"`
+	Connected bool   `json:"connected"`
+}
+
+// Upstreams describes every configured upstream.
+func (p *Proxy) Upstreams() []UpstreamInfo {
+	out := make([]UpstreamInfo, 0, len(p.upstreams))
+	for _, u := range p.upstreams {
+		info := UpstreamInfo{Name: u.name(), Transport: u.cfg.Transport()}
+		if session, err := u.conn(); err == nil {
+			info.Connected = true
+			if res := session.InitializeResult(); res != nil && res.ServerInfo != nil {
+				info.Server, info.Version = res.ServerInfo.Name, res.ServerInfo.Version
+			}
+		}
+		out = append(out, info)
+	}
+	return out
+}
