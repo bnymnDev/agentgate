@@ -44,6 +44,7 @@ type Config struct {
 	Notify          Notify        `yaml:"notify"`
 	Pinning         Pinning       `yaml:"pinning"`
 	Canaries        Canaries      `yaml:"canaries"`
+	Taint           Taint         `yaml:"taint"`
 	Telemetry       Telemetry     `yaml:"telemetry"`
 
 	// Path is the file the config was read from. It is not part of the file.
@@ -401,6 +402,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, err)
 	}
 	if err := c.Canaries.normalize(c.Audit.Path); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.Taint.normalize(); err != nil {
 		errs = append(errs, err)
 	}
 	c.Telemetry.OTLP.Endpoint = ExpandEnv(c.Telemetry.OTLP.Endpoint)

@@ -5,7 +5,11 @@ import (
 	"fmt"
 	"net/url"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
+
+	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
 // Honeypots are tools that do not exist. They are advertised to the host like
@@ -265,6 +269,77 @@ func (c *Canaries) normalize(auditPath string) error {
 		if u, err := url.Parse(c.Resource); err != nil || u.Scheme == "" {
 			errs = append(errs, fmt.Errorf("canaries.resource: %q is not a URI", c.Resource))
 		}
+	}
+	return errors.Join(errs...)
+}
+
+// Taint remembers the values that look like secrets in tool results a session
+// should keep to itself, and notices them on their way out.
+type Taint struct {
+	// Mode is what a call carrying a tainted value out does: off, warn (the
+	// default: it is logged and reported, and goes through), ask or deny.
+	Mode string `yaml:"mode"`
+	// Labels make a result private when the call that returned it earned
+	// one of them. The default is private-data, which the secrets and
+	// lethal-trifecta packs attach to reading .env files and the like.
+	Labels []string `yaml:"labels"`
+	// Tools make a result private by the tool that returned it: globs over
+	// upstream.tool or the name the host sees, e.g. "vault.*".
+	Tools []string `yaml:"tools"`
+	// MinLength is the shortest value remembered; shorter ones match too
+	// much ordinary text. The default is 12.
+	MinLength int `yaml:"min_length"`
+
+	tools []*regexp.Regexp
+}
+
+// Enabled reports whether taint tracking is on.
+func (t *Taint) Enabled() bool { return t.Mode != "off" }
+
+// Private reports whether a result is private: its call earned one of the
+// labels, or came from one of the tools.
+func (t *Taint) Private(names, labels []string) bool {
+	for _, l := range labels {
+		if slices.Contains(t.Labels, l) {
+			return true
+		}
+	}
+	for _, re := range t.tools {
+		for _, n := range names {
+			if re.MatchString(n) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (t *Taint) normalize() error {
+	var errs []error
+	switch t.Mode {
+	case "":
+		t.Mode = "warn"
+	case "off", "warn", "ask", "deny":
+	default:
+		errs = append(errs, fmt.Errorf("taint.mode: unknown mode %q, use off, warn, ask or deny", t.Mode))
+	}
+	if t.Labels == nil {
+		t.Labels = []string{"private-data"}
+	}
+	if t.MinLength == 0 {
+		t.MinLength = 12
+	}
+	if t.MinLength < 6 {
+		errs = append(errs, errors.New("taint.min_length: values shorter than 6 characters would match ordinary text"))
+	}
+	t.tools = nil
+	for _, g := range t.Tools {
+		re, err := policy.CompileGlob(g)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("taint.tools: %q: %w", g, err))
+			continue
+		}
+		t.tools = append(t.tools, re)
 	}
 	return errors.Join(errs...)
 }

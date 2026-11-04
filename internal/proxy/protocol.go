@@ -384,6 +384,6 @@ func (p *Proxy) inspectContent(ss *mcp.ServerSession, upstream, what string, con
 		p.log.Info("session labelled", "session", st.id, "by", what, "labels", strings.Join(added, ","))
 	}
 	if p.taintsFrom(st, what, labels) {
-		p.taint(st, text)
+		p.taint(st, text, what)
 	}
 }

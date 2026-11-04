@@ -100,6 +100,8 @@ type sessionState struct {
 	finished bool
 	// approved holds the tools a human allowed for the rest of the session.
 	approved map[string]bool
+	// taint is what the session read from private results.
+	taint tainted
 }
 
 // approvedForSession reports whether a human already waved this tool through

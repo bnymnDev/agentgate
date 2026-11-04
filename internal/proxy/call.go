@@ -67,8 +67,10 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		}
 	}
 	decision := policy.Evaluate(&cfg.Policy, call)
-	if decision.Action == policy.ActionAllow {
-		if d, hit := p.taintHit(st, string(args)+"\n"+canary.Strings(anyMap(call.Args))); hit {
+	// A secret the session read from a private result, on its way out. The
+	// stricter of the two decides; the kill switch stays the kill switch.
+	if decision.RuleID != policy.RuleFrozen {
+		if d, hit := p.taintHit(st, string(args)+"\n"+canary.Strings(anyMap(call.Args))); hit && rank(d.Action) > rank(decision.Action) {
 			decision = d
 		}
 	}
@@ -190,7 +192,13 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		}
 	}
 
-	rec.Labels = p.forwarded(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
+	var produced []string
+	rec.Labels, produced = p.forwardedAll(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
+	if p.taintsFrom(st, b.Exposed, produced) || p.taintsFrom(st, b.Upstream+"."+b.Name, produced) {
+		if res := policy.ResultFromJSON(rec.Result); res != nil {
+			p.taint(st, res.Text, b.Exposed)
+		}
+	}
 	p.record(st, rec)
 	return result, nil
 }
@@ -199,7 +207,14 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 // applies the policy's label rules to it, next to the labels agentgate
 // attaches itself. It returns the labels the session earned with this call.
 func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time, builtin ...string) []string {
-	labels := builtin
+	added, _ := p.forwardedAll(pol, st, call, result, tokens, at, builtin...)
+	return added
+}
+
+// forwardedAll is forwarded, and also returns every label the call produced,
+// including the ones the session already had.
+func (p *Proxy) forwardedAll(pol *policy.Policy, st *sessionState, call *policy.Call, result []byte, tokens int, at time.Time, builtin ...string) ([]string, []string) {
+	labels := append([]string(nil), builtin...)
 	if len(pol.Labels) > 0 {
 		if pol.LabelsReadResult() {
 			call.Result = policy.ResultFromJSON(result)
@@ -210,7 +225,7 @@ func (p *Proxy) forwarded(pol *policy.Policy, st *sessionState, call *policy.Cal
 	if len(added) > 0 {
 		p.log.Info("session labelled", "session", st.id, "tool", call.Tool, "labels", strings.Join(added, ","))
 	}
-	return added
+	return added, labels
 }
 
 // verb is the past tense the shadow-mode messages use.
