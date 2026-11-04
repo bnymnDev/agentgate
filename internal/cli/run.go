@@ -285,6 +285,7 @@ func buildUIServer(opts runOptions, cfg *config.Config, store *audit.Store, inbo
 	srv, err := ui.New(ui.Options{
 		Store:     store,
 		Config:    p.Config,
+		Replay:    uiReplay(store, p.Config),
 		Approvals: inbox,
 		Reload: func() (*config.Config, error) {
 			fresh, err := config.Load(cfg.Path)

@@ -21,6 +21,7 @@ func newReplayCmd(g *globals) *cobra.Command {
 		dryRun      bool
 		onlyAllowed bool
 		asJSON      bool
+		until       int
 	)
 	cmd := &cobra.Command{
 		Use:   "replay <session-id>",
@@ -60,6 +61,7 @@ configured now, and the fresh results are compared with the recorded ones.`,
 				Host:         policy.Host{Name: sess.HostName, Version: sess.HostVersion},
 				Annotations:  catalogAnnotations(cmd.Context(), store),
 				ResultLabels: resultLabels(cfg),
+				Until:        until,
 			}
 			if !dryRun {
 				p, err := connectForReplay(cmd.Context(), g, cfg)
@@ -82,12 +84,20 @@ configured now, and the fresh results are compared with the recorded ones.`,
 				return writeJSON(cmd.OutOrStdout(), report)
 			}
 			printReplay(cmd, report, dryRun)
+			if until > 0 && len(report.Entries) > 0 {
+				st := report.Entries[len(report.Entries)-1].State
+				out := cmd.OutOrStdout()
+				fmt.Fprintf(out, "\nthe session after call %d, under the current policy:\n", len(report.Entries)-1)
+				fmt.Fprintf(out, "  labels  %s\n  calls   %d forwarded, ~%d tokens\n  tools   %s\n",
+					orDash(strings.Join(st.Labels, ", ")), st.Calls, st.Tokens, orDash(strings.Join(st.Called, ", ")))
+			}
 			return nil
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "only re-evaluate the policy, send nothing")
 	cmd.Flags().BoolVar(&onlyAllowed, "only-allowed", false, "skip calls that were denied when they were recorded")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the report as JSON")
+	cmd.Flags().IntVar(&until, "until", 0, "stop after this many calls and show the session as it stood then")
 	return cmd
 }
 
@@ -233,4 +243,18 @@ func decisionParam(v string) policy.Action {
 		return a
 	}
 	return ""
+}
+
+// uiReplay is the dry run the web UI's time-travel page shows: the same as
+// agentgate replay --dry-run.
+func uiReplay(store *audit.Store, cfg func() *config.Config) func(context.Context, *audit.Session, []*audit.Call) (*replay.Report, error) {
+	return func(ctx context.Context, sess *audit.Session, calls []*audit.Call) (*replay.Report, error) {
+		c := cfg()
+		return replay.Run(ctx, sess.ID, calls, replay.Options{
+			Policy:       &c.Policy,
+			Host:         policy.Host{Name: sess.HostName, Version: sess.HostVersion},
+			Annotations:  catalogAnnotations(ctx, store),
+			ResultLabels: resultLabels(c),
+		})
+	}
 }

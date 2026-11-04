@@ -3,6 +3,7 @@ package replay
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"testing"
 	"time"
 
@@ -274,4 +275,40 @@ policy:
 	require.NoError(t, err)
 	require.Equal(t, policy.ActionAsk, report.Entries[0].Now.Action)
 	require.Equal(t, policy.ActionAllow, report.Entries[1].Now.Action)
+}
+
+// Every step carries the session as it stood after it, and Until stops
+// where the debugger was told to.
+func TestStateAtEveryStep(t *testing.T) {
+	var calls []*audit.Call
+	for range 3 {
+		calls = append(calls, recorded("fs__read_file", "fs", `{}`, policy.ActionAllow))
+	}
+	pol := mustPolicy(t, `
+version: 1
+upstreams:
+  - name: fs
+    stdio: ["true"]
+policy:
+  default: allow
+  labels:
+    - label: read-something
+      tool: "fs.read_file"
+`)
+	report, err := Run(context.Background(), "s", calls, Options{Policy: pol})
+	require.NoError(t, err)
+	require.Equal(t, 1, report.Entries[0].State.Calls)
+	require.Equal(t, []string{"read-something"}, report.Entries[0].State.Labels)
+	require.Equal(t, 3, report.Entries[2].State.Calls)
+	require.Equal(t, []string{"fs.read_file", "fs__read_file"}, sorted(report.Entries[2].State.Called))
+
+	report, err = Run(context.Background(), "s", calls, Options{Policy: pol, Until: 2})
+	require.NoError(t, err)
+	require.Len(t, report.Entries, 2)
+}
+
+func sorted(s []string) []string {
+	out := append([]string(nil), s...)
+	sort.Strings(out)
+	return out
 }

@@ -44,6 +44,7 @@ because there is no proxy running behind it.`,
 			srv, err := ui.New(ui.Options{
 				Store:  store,
 				Config: func() *config.Config { return cfg },
+				Replay: uiReplay(store, func() *config.Config { return cfg }),
 				Freeze: func(reason, by string) error {
 					_, err := killswitch.Engage(cfg.FreezeFile(), reason, by)
 					return err

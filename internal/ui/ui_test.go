@@ -336,3 +336,17 @@ func TestToolsPage(t *testing.T) {
 	require.Equal(t, []string{"demo.echo"}, tools.trusted)
 	require.Contains(t, rec.Body.String(), "Trusted demo.echo")
 }
+
+func TestTimeTravel(t *testing.T) {
+	h, sess := newTestServer(t)
+	rec := get(t, h, "/sessions/"+sess.ID+"/travel?step=0")
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(t, body, "Time travel")
+	require.Contains(t, body, `type="range"`)
+	require.Contains(t, body, "fs__write_file")
+	require.Contains(t, body, "rule no-etc")
+	require.Contains(t, body, "0 of 1 calls get a different decision")
+	require.Equal(t, http.StatusOK, get(t, h, "/sessions/"+sess.ID+"/travel?step=99").Code, "a step past the end is the last")
+	require.Contains(t, get(t, h, "/sessions/"+sess.ID).Body.String(), "/travel")
+}

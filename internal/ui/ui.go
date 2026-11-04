@@ -23,6 +23,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
 	"github.com/bnymnDev/agentgate/internal/proxy"
+	"github.com/bnymnDev/agentgate/internal/replay"
 )
 
 //go:embed templates/*.html
@@ -62,7 +63,11 @@ type Options struct {
 	Freeze   func(reason, by string) error
 	Unfreeze func() error
 	// Tools shows and trusts tools; nil when no proxy runs behind the UI.
-	Tools   ToolSource
+	Tools ToolSource
+	// Replay re-evaluates a recorded session under the policy in force, for
+	// the time-travel page. Nil uses the policy alone, without the tool
+	// annotations and result labels the CLI adds.
+	Replay  func(ctx context.Context, sess *audit.Session, calls []*audit.Call) (*replay.Report, error)
 	Logger  *slog.Logger
 	Version string
 }
@@ -85,7 +90,7 @@ func New(opts Options) (*Server, error) {
 	s := &Server{opts: opts, log: opts.Logger, tmpl: map[string]*template.Template{}}
 	// Every page is parsed together with the layout, which is how html/template
 	// wants overriding blocks to be set up.
-	for _, page := range []string{"sessions", "session", "call", "policy", "approvals", "live", "tools"} {
+	for _, page := range []string{"sessions", "session", "call", "policy", "approvals", "live", "tools", "travel"} {
 		t, err := template.New("layout.html").Funcs(funcs()).
 			ParseFS(templateFS, "templates/layout.html", "templates/"+page+".html")
 		if err != nil {
@@ -104,6 +109,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.handleSessions)
 	mux.HandleFunc("GET /partials/sessions", s.handleSessionsPartial)
 	mux.HandleFunc("GET /sessions/{id}", s.handleSession)
+	mux.HandleFunc("GET /sessions/{id}/travel", s.handleTravel)
 	mux.HandleFunc("GET /partials/calls", s.handleCallsPartial)
 	mux.HandleFunc("GET /calls/{id}", s.handleCall)
 	mux.HandleFunc("GET /policy", s.handlePolicy)

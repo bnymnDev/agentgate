@@ -114,3 +114,6 @@ func (t *Tracker) History() History {
 
 // Calls is the number of calls forwarded so far.
 func (t *Tracker) Calls() int { return t.calls }
+
+// Tokens is the estimated number of tokens spent so far.
+func (t *Tracker) Tokens() int { return t.tokens }

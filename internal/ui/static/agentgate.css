@@ -111,3 +111,19 @@ article.frozen button { margin: 0; white-space: nowrap; }
 @keyframes live-in { from { background: color-mix(in srgb, var(--pico-primary) 14%, transparent); } }
 details.tool-report form { margin: 0.5rem 0 0; }
 details.tool-report form button { width: auto; }
+
+.travel-steps { display: flex; flex-wrap: wrap; gap: 3px; margin: 0.5rem 0; }
+.travel-steps .step {
+  width: 12px; height: 22px; border-radius: 2px; background: var(--pico-muted-border-color);
+  text-decoration: none;
+}
+.travel-steps .step.allow { background: var(--ag-allow); }
+.travel-steps .step.deny { background: var(--ag-deny); }
+.travel-steps .step.ask { background: var(--ag-ask); }
+.travel-steps .step.changed { outline: 2px solid var(--pico-color); outline-offset: 1px; }
+.travel-steps .step.here { transform: scaleY(1.35); box-shadow: 0 0 0 2px var(--pico-primary); }
+article.travel-step { border-left: 4px solid var(--pico-muted-border-color); }
+article.travel-step.allow { border-left-color: var(--ag-allow); }
+article.travel-step.deny { border-left-color: var(--ag-deny); }
+article.travel-step.ask { border-left-color: var(--ag-ask); }
+article.travel-step header { display: flex; gap: 0.8rem; align-items: baseline; flex-wrap: wrap; }
