@@ -1,7 +1,9 @@
 package proxy
 
 import (
+	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -19,6 +21,8 @@ import (
 type chatQuestion struct {
 	nonce  string
 	answer chan Verdict
+	// seen is who answered already: in a chat, each person counts once.
+	seen map[string]bool
 }
 
 type chatQuestions struct {
@@ -30,7 +34,7 @@ type chatQuestions struct {
 // answer arrives on; close forgets it.
 func (c *chatQuestions) open() (id, nonce string, answer <-chan Verdict, close func()) {
 	id, nonce = randomHex(4), randomHex(8)
-	q := &chatQuestion{nonce: nonce, answer: make(chan Verdict, 1)}
+	q := &chatQuestion{nonce: nonce, answer: make(chan Verdict, 16), seen: map[string]bool{}}
 	c.mu.Lock()
 	if c.m == nil {
 		c.m = map[string]*chatQuestion{}
@@ -45,13 +49,25 @@ func (c *chatQuestions) open() (id, nonce string, answer <-chan Verdict, close f
 }
 
 // deliver hands an answer to the question it belongs to. It reports whether
-// there was one: an unknown id, a wrong nonce or a question already answered
-// is not.
+// it counted: an unknown id, a wrong nonce or a second answer by the same
+// person does not.
 func (c *chatQuestions) deliver(id, nonce string, choice Choice, who, where string) bool {
 	c.mu.Lock()
 	q, ok := c.m[id]
+	if ok && subtle.ConstantTimeCompare([]byte(nonce), []byte(q.nonce)) == 1 {
+		key := who
+		if key == "" {
+			key = "anonymous"
+		}
+		if q.seen[key] {
+			ok = false
+		}
+		q.seen[key] = true
+	} else {
+		ok = false
+	}
 	c.mu.Unlock()
-	if !ok || subtle.ConstantTimeCompare([]byte(nonce), []byte(q.nonce)) != 1 {
+	if !ok {
 		return false
 	}
 	by := where
@@ -69,6 +85,7 @@ func (c *chatQuestions) deliver(id, nonce string, choice Choice, who, where stri
 	default:
 		return false
 	}
+	v.Who, v.Channel = who, where
 	select {
 	case q.answer <- v:
 		return true
@@ -126,5 +143,52 @@ func outcomeText(v *Verdict, err error) string {
 		return "Allowed — " + v.Reason
 	default:
 		return "Denied — " + v.Reason
+	}
+}
+
+// Collector is an approver that can take more than one answer to the same
+// question — several people in one chat — which a quorum needs. It posts
+// the question, sends every answer to out as it arrives, and settles the
+// question when ctx ends; context.Cause(ctx) carries the final outcome.
+type Collector interface {
+	Collect(ctx context.Context, req ApprovalRequest, out chan<- Verdict) error
+}
+
+// settled is the cause a question is closed with: how it ended.
+type settled struct{ v Verdict }
+
+func (s settled) Error() string { return "settled" }
+
+// finalOutcome is how a collected question ended, if the asker said.
+func finalOutcome(ctx context.Context) *Verdict {
+	var s settled
+	if errors.As(context.Cause(ctx), &s) {
+		return &s.v
+	}
+	return nil
+}
+
+// firstAnswer is Approve for a Collector: the first answer decides.
+func firstAnswer(ctx context.Context, c Collector, req ApprovalRequest) (Verdict, error) {
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
+	out := make(chan Verdict, 16)
+	done := make(chan error, 1)
+	go func() { done <- c.Collect(ctx, req, out) }()
+	select {
+	case v := <-out:
+		cancel(settled{v})
+		<-done
+		return v, nil
+	case err := <-done:
+		select {
+		case v := <-out:
+			return v, nil
+		default:
+		}
+		if err != nil {
+			return Verdict{}, err
+		}
+		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
 	}
 }

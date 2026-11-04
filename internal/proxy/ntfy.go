@@ -254,12 +254,12 @@ func (n *NtfyApprover) answer(msg string) {
 	if !ok || subtle.ConstantTimeCompare([]byte(nonce), []byte(entry.nonce)) != 1 {
 		return
 	}
-	v := Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the phone"}}
+	v := Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the phone"}, Channel: "phone"}
 	switch choice {
 	case ChoiceAllow:
-		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the phone"}}
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the phone"}, Channel: "phone"}
 	case ChoiceAllowSession:
-		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the phone for the rest of the session"}, Session: true}
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the phone for the rest of the session"}, Session: true, Channel: "phone"}
 	case ChoiceDeny:
 	default:
 		return
@@ -283,8 +283,12 @@ func randomHex(n int) string {
 // are withdrawn. A channel that cannot ask at all (an error) is skipped.
 type FanoutApprover []Approver
 
-// Approve asks everyone and returns the first answer.
+// Approve asks everyone and returns the first answer, or with a quorum,
+// waits for that many different people.
 func (f FanoutApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
+	if req.Quorum > 1 {
+		return f.quorum(ctx, req)
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	type result struct {

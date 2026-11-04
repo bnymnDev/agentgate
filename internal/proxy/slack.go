@@ -13,8 +13,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-
-	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
 // SlackApprover asks in a Slack channel. The question is a message with
@@ -120,6 +118,11 @@ func slackEscape(s string) string {
 
 // Approve posts the question and waits for a press, or ctx.
 func (s *SlackApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
+	return firstAnswer(ctx, s, req)
+}
+
+// Collect posts the question and passes on every press until ctx ends.
+func (s *SlackApprover) Collect(ctx context.Context, req ApprovalRequest, out chan<- Verdict) error {
 	id, nonce, answer, done := s.questions.open()
 	defer done()
 	title, body := chatText(req, s.Redact)
@@ -130,26 +133,25 @@ func (s *SlackApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdi
 	if err := s.call(ctx, s.BotToken, "chat.postMessage", map[string]any{
 		"channel": s.Channel, "text": title, "blocks": slackBlocks(title, body, true, id, nonce),
 	}, &posted); err != nil {
-		return Verdict{}, err
+		return err
 	}
-	var v *Verdict
-	select {
-	case got := <-answer:
-		v = &got
-	case <-ctx.Done():
+	for wait := true; wait; {
+		select {
+		case v := <-answer:
+			out <- v
+		case <-ctx.Done():
+			wait = false
+		}
 	}
 	settle, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := s.call(settle, s.BotToken, "chat.update", map[string]any{
 		"channel": posted.Channel, "ts": posted.TS, "text": title,
-		"blocks": slackBlocks(title, body+"\n\n"+outcomeText(v, nil), false, "", ""),
+		"blocks": slackBlocks(title, body+"\n\n"+outcomeText(finalOutcome(ctx), nil), false, "", ""),
 	}, nil); err != nil {
 		s.log().Debug("slack approvals: could not settle a question", "error", err)
 	}
-	if v == nil {
-		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
-	}
-	return *v, nil
+	return nil
 }
 
 // Run keeps the Socket Mode connection open until ctx ends, reconnecting

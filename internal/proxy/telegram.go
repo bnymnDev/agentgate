@@ -10,8 +10,6 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
 // TelegramApprover asks in a Telegram chat. The question is a message with
@@ -87,6 +85,11 @@ func (t *TelegramApprover) call(ctx context.Context, method string, params, out 
 
 // Approve posts the question and waits for a press, or ctx.
 func (t *TelegramApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict, error) {
+	return firstAnswer(ctx, t, req)
+}
+
+// Collect posts the question and passes on every press until ctx ends.
+func (t *TelegramApprover) Collect(ctx context.Context, req ApprovalRequest, out chan<- Verdict) error {
 	id, nonce, answer, done := t.questions.open()
 	defer done()
 	title, body := chatText(req, t.Redact)
@@ -104,26 +107,25 @@ func (t *TelegramApprover) Approve(ctx context.Context, req ApprovalRequest) (Ve
 		}}},
 	}, &msg)
 	if err != nil {
-		return Verdict{}, err
+		return err
 	}
-	var v *Verdict
-	select {
-	case got := <-answer:
-		v = &got
-	case <-ctx.Done():
+	for wait := true; wait; {
+		select {
+		case v := <-answer:
+			out <- v
+		case <-ctx.Done():
+			wait = false
+		}
 	}
 	// The buttons go, so nobody presses them on a question that is gone.
 	settle, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := t.call(settle, "editMessageText", map[string]any{
-		"chat_id": t.ChatID, "message_id": msg.MessageID, "text": title + "\n\n" + outcomeText(v, nil),
+		"chat_id": t.ChatID, "message_id": msg.MessageID, "text": title + "\n\n" + outcomeText(finalOutcome(ctx), nil),
 	}, nil); err != nil {
 		t.log().Debug("telegram approvals: could not settle a question", "error", err)
 	}
-	if v == nil {
-		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "approval timed out"}}, nil
-	}
-	return *v, nil
+	return nil
 }
 
 // Run polls for button presses until ctx ends.

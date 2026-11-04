@@ -57,6 +57,9 @@ type Decision struct {
 	// that are not rules — budgets, the loop guard, a freeze — use a fixed id
 	// so that they can still be told apart in the audit log.
 	RuleID string `json:"rule_id,omitempty"`
+	// Quorum is how many people must approve an ask: the rule's quorum.
+	// Zero and one mean one.
+	Quorum int `json:"quorum,omitempty"`
 }
 
 // Labels agentgate itself attaches to a session, next to the ones label
@@ -196,6 +199,9 @@ type Rule struct {
 	When   Conditions `yaml:"when" json:"when,omitempty"`
 	Action Action     `yaml:"action" json:"action"`
 	Reason string     `yaml:"reason" json:"reason,omitempty"`
+	// Quorum, on an ask rule, is how many different people must approve:
+	// two makes it a two-person rule. Any one of them denying denies.
+	Quorum int `yaml:"quorum" json:"quorum,omitempty"`
 	// Pack names the pack the rule came from; empty for your own rules.
 	Pack string `yaml:"-" json:"pack,omitempty"`
 
@@ -385,7 +391,7 @@ func Evaluate(p *Policy, call *Call) Decision {
 	}
 	for _, r := range p.Rules {
 		if r.matches(call) {
-			return Decision{Action: r.Action, Reason: r.reason(), RuleID: r.ID}
+			return Decision{Action: r.Action, Reason: r.reason(), RuleID: r.ID, Quorum: r.Quorum}
 		}
 	}
 	def := p.Default

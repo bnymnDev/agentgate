@@ -352,7 +352,11 @@ func (p *Proxy) resolveAsk(ctx context.Context, st *sessionState, b ToolBinding,
 	}
 	p.log.Info("approval required",
 		"session", st.id, "tool", b.Exposed, "rule", decision.RuleID, "reason", decision.Reason)
-	verdict, err := p.approver.Approve(askCtx, ApprovalRequest{
+	approver := p.approver
+	if _, fan := approver.(FanoutApprover); decision.Quorum > 1 && !fan {
+		approver = FanoutApprover{approver}
+	}
+	verdict, err := approver.Approve(askCtx, ApprovalRequest{
 		SessionID: st.id,
 		Upstream:  b.Upstream,
 		Tool:      b.Exposed,
@@ -360,6 +364,7 @@ func (p *Proxy) resolveAsk(ctx context.Context, st *sessionState, b ToolBinding,
 		Args:      args,
 		Decision:  decision,
 		Timeout:   timeout,
+		Quorum:    decision.Quorum,
 	})
 	if err != nil {
 		return policy.Decision{

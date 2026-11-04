@@ -80,6 +80,14 @@ func (p *Policy) Compile() error {
 		if !r.Action.Valid() {
 			errs = append(errs, fmt.Errorf("%s: unknown action %q, want allow, deny or ask", where, r.Action))
 		}
+		switch {
+		case r.Quorum < 0:
+			errs = append(errs, fmt.Errorf("%s: quorum must not be negative", where))
+		case r.Quorum > 1 && r.Action != ActionAsk:
+			errs = append(errs, fmt.Errorf("%s: quorum only means something on an ask rule", where))
+		case r.Quorum > 9:
+			errs = append(errs, fmt.Errorf("%s: a quorum of %d people will not gather in time; at most 9", where, r.Quorum))
+		}
 		pat, err := compilePattern(r.Tool)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", where, err))

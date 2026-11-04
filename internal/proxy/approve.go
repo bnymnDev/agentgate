@@ -25,6 +25,8 @@ type ApprovalRequest struct {
 	Args      json.RawMessage `json:"args,omitempty"`
 	Decision  policy.Decision `json:"decision"`
 	Timeout   time.Duration   `json:"-"`
+	// Quorum is how many different people must approve; see policy.Rule.
+	Quorum int `json:"quorum,omitempty"`
 }
 
 // Verdict is an approver's answer. Session is set when the human chose to
@@ -33,6 +35,11 @@ type ApprovalRequest struct {
 type Verdict struct {
 	policy.Decision
 	Session bool
+	// Who answered, when the channel knows: a chat user name. Channel is
+	// where: "terminal", "web UI", "phone", "Telegram", "Slack". Both are
+	// empty on a verdict nobody gave, such as a timeout.
+	Who     string
+	Channel string
 }
 
 // Approver turns an "ask" into an allow or a deny. An error means the question
@@ -142,13 +149,13 @@ func (t *TTYApprover) Approve(ctx context.Context, req ApprovalRequest) (Verdict
 		switch answer {
 		case "y", "yes":
 			fmt.Fprintf(t.Out, "  allowed\n")
-			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal"}}, nil
+			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal"}, Channel: "terminal"}, nil
 		case "a", "always":
 			fmt.Fprintf(t.Out, "  allowed for the rest of this session\n")
-			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal for the rest of the session"}, Session: true}, nil
+			return Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved on the agentgate terminal for the rest of the session"}, Session: true, Channel: "terminal"}, nil
 		}
 		fmt.Fprintf(t.Out, "  denied\n")
-		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the agentgate terminal"}}, nil
+		return Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected on the agentgate terminal"}, Channel: "terminal"}, nil
 	}
 }
 
@@ -264,12 +271,12 @@ func (i *Inbox) Resolve(id string, choice Choice, who string) bool {
 	if !ok {
 		return false
 	}
-	v := Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected in the agentgate web UI"}}
+	v := Verdict{Decision: policy.Decision{Action: policy.ActionDeny, Reason: "rejected in the agentgate web UI"}, Channel: "web UI"}
 	switch choice {
 	case ChoiceAllow:
-		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI"}}
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI"}, Channel: "web UI"}
 	case ChoiceAllowSession:
-		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI for the rest of the session"}, Session: true}
+		v = Verdict{Decision: policy.Decision{Action: policy.ActionAllow, Reason: "approved in the agentgate web UI for the rest of the session"}, Session: true, Channel: "web UI"}
 	}
 	if who != "" {
 		v.Reason += " by " + who
