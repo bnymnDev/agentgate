@@ -181,6 +181,13 @@ type Pinning struct {
 	// talk about another server's tools: warn (the default), quarantine (hide
 	// the tool until it is trusted) or off.
 	Scan string `yaml:"scan"`
+	// Registry is a directory or base URL of definitions other people
+	// trusted, one file per server version (agentgate lock --publish writes
+	// them). A definition seen for the first time is then pinned only when
+	// it is what the registry has; one that differs is reported, and held
+	// back when pinning is enforced. A server the registry does not have is
+	// pinned on first use as usual.
+	Registry string `yaml:"registry"`
 }
 
 // Enabled reports whether a lockfile is kept.
@@ -212,6 +219,17 @@ func (p *Pinning) normalize(configPath string) error {
 	case "warn", "quarantine", "off":
 	default:
 		errs = append(errs, fmt.Errorf("pinning.scan: unknown value %q, use warn, quarantine or off", p.Scan))
+	}
+	if p.Registry != "" && !strings.HasPrefix(p.Registry, "https://") && !strings.HasPrefix(p.Registry, "http://") {
+		path, err := ExpandPath(p.Registry)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("pinning.registry: %w", err))
+		} else {
+			if !filepath.IsAbs(path) && configPath != "" {
+				path = filepath.Join(filepath.Dir(configPath), path)
+			}
+			p.Registry = path
+		}
 	}
 	switch {
 	case p.Lockfile != "":

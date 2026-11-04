@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"slices"
 	"sort"
@@ -42,6 +43,9 @@ type ToolReport struct {
 	// why it is, or why it would be when the proxy only inspects.
 	Quarantined bool   `json:"quarantined,omitempty"`
 	Reason      string `json:"reason,omitempty"`
+	// Registry is "same" or "differs" when pinning.registry has this
+	// definition, compared on its first sight.
+	Registry string `json:"registry,omitempty"`
 }
 
 // offeredTool is one tool as an upstream listed it during a refresh.
@@ -90,7 +94,7 @@ func (p *Proxy) lockfile(cfg *config.Config) *pinning.Lockfile {
 // checkPins compares what the upstreams offer with the lockfile, scans every
 // definition, pins what is new if the mode allows, and returns the tools to
 // hold back, with the reason, and every tool's report.
-func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool) (map[string]string, []ToolReport) {
+func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool, registry map[string]*pinning.Entry) (map[string]string, []ToolReport) {
 	pin := &cfg.Pinning
 	if !pin.Enabled() && !pin.Scans() {
 		return nil, nil
@@ -135,15 +139,33 @@ func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool) (map[string
 		for _, r := range lock.Check(up, defs, others) {
 			tr := ToolReport{Report: r, Exposed: exposed[r.Tool]}
 			reason := ""
-			switch r.Status {
-			case pinning.StatusUnpinned:
+			differs := ""
+			if e := registry[up]; e != nil && (r.Status == pinning.StatusUnpinned || r.Status == pinning.StatusNew) {
+				if item, ok := e.Definitions[r.Tool]; ok && item.Hash != r.Current.Hash() {
+					differs = "it differs from what the registry has for " + strings.TrimSpace(e.Server+" "+e.Version)
+					tr.Registry = "differs"
+					if pin.Enforced() {
+						reason = differs
+					}
+				} else if ok {
+					tr.Registry = "same"
+				}
+			}
+			switch {
+			case differs != "":
+				// Not pinned: what this machine is offered is not what
+				// everyone else trusted.
+				if live {
+					p.announceDrift(up, tr, "offers a "+r.Current.What()+" that "+differs, reason)
+				}
+			case r.Status == pinning.StatusUnpinned:
 				if pin.Enabled() && live {
 					lock.Pin(up, r.Current, nil, now)
 					tr.PinnedNow, dirty = true, true
 				}
-			case pinning.StatusNew:
+			case r.Status == pinning.StatusNew:
 				switch {
-				case pin.Enforced():
+				case pin.Enforced() && tr.Registry != "same":
 					reason = "it is new since the server was pinned, and pinning is enforced"
 				case live:
 					lock.Pin(up, r.Current, nil, now)
@@ -152,7 +174,7 @@ func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool) (map[string
 				if live {
 					p.announceDrift(up, tr, "offers a new "+r.Current.What(), reason)
 				}
-			case pinning.StatusChanged:
+			case r.Status == pinning.StatusChanged:
 				if pin.Enforced() {
 					reason = "its definition changed since it was pinned"
 				}
@@ -160,7 +182,7 @@ func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool) (map[string
 					dirty = true
 					p.announceDrift(up, tr, "changed a pinned "+r.Current.What()+": "+changeSummary(*r.Pinned, r.Current), reason)
 				}
-			case pinning.StatusRemoved:
+			case r.Status == pinning.StatusRemoved:
 				reports = append(reports, tr)
 				continue
 			}
@@ -551,4 +573,46 @@ func definitionOf(t *mcp.Tool) (pinning.Definition, error) {
 		return pinning.Definition{}, err
 	}
 	return pinning.DefinitionFromJSON(raw)
+}
+
+// registryEntries looks up, in pinning.registry, the entry of every
+// connected upstream's server version. Entries are fetched once per version;
+// a registry that cannot be reached is tried again on the next refresh.
+func (p *Proxy) registryEntries(ctx context.Context, cfg *config.Config) map[string]*pinning.Entry {
+	source := cfg.Pinning.Registry
+	if source == "" || !cfg.Pinning.Enabled() {
+		return nil
+	}
+	out := map[string]*pinning.Entry{}
+	client := &http.Client{Timeout: 10 * time.Second}
+	for _, u := range p.Upstreams() {
+		if !u.Connected || u.Server == "" {
+			continue
+		}
+		key := u.Server + "\x00" + u.Version
+		p.registryMu.Lock()
+		e, cached := p.registry[key]
+		p.registryMu.Unlock()
+		if !cached {
+			got, err := pinning.LoadEntry(ctx, source, u.Server, u.Version, client)
+			switch {
+			case errors.Is(err, pinning.ErrNotInRegistry):
+			case err != nil:
+				p.log.Warn("pinning registry: cannot look up a server", "upstream", u.Name, "server", u.Server, "error", err)
+				continue
+			default:
+				e = got
+			}
+			p.registryMu.Lock()
+			if p.registry == nil {
+				p.registry = map[string]*pinning.Entry{}
+			}
+			p.registry[key] = e
+			p.registryMu.Unlock()
+		}
+		if e != nil {
+			out[u.Name] = e
+		}
+	}
+	return out
 }

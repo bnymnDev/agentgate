@@ -274,7 +274,7 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 			offered = append(offered, offeredTool{upstream: u.name(), exposed: instructionsKey(u.name()), def: d})
 		}
 	}
-	held, reports := p.checkPins(cfg, offered)
+	held, reports := p.checkPins(cfg, offered, p.registryEntries(ctx, cfg))
 	if len(held) > 0 {
 		kept := newTools[:0]
 		for _, t := range newTools {

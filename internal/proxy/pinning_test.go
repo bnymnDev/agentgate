@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/bnymnDev/agentgate/internal/pinning"
+	"github.com/bnymnDev/agentgate/internal/testserver"
 )
 
 func pinningConfig(lockfile, mode, scan string) string {
@@ -258,4 +260,52 @@ func TestFirstPromptsOnAPinnedServerArePinned(t *testing.T) {
 	lock, err = pinning.Load(lockPath)
 	require.NoError(t, err)
 	require.NotNil(t, lock.Pinned("demo", "prompt:greet"))
+}
+
+// With a registry, the first sight is checked too: a tool that is not what
+// the registry has for this server version is not pinned, and enforce mode
+// holds it back; one that matches is pinned as usual.
+func TestRegistryChecksTheFirstSight(t *testing.T) {
+	dir := t.TempDir()
+	// What the demo server offers, trusted once and published.
+	first := filepath.Join(dir, "first.lock")
+	setup(t, pinningConfig(first, "warn", "warn"))
+	lock, err := pinning.Load(first)
+	require.NoError(t, err)
+	var defs []pinning.Definition
+	for _, pin := range lock.Upstreams["demo"].Tools {
+		defs = append(defs, pin.Definition)
+	}
+	registry := filepath.Join(dir, "registry")
+	_, err = pinning.Publish(registry, pinning.NewEntry(testserver.Name, "1.0.0", defs))
+	require.NoError(t, err)
+
+	withRegistry := func(lockfile string) string {
+		return strings.Replace(pinningConfig(lockfile, "enforce", "warn"), "pinning:\n", "pinning:\n  registry: "+registry+"\n", 1)
+	}
+	h := setup(t, withRegistry(filepath.Join(dir, "same.lock")))
+	require.Contains(t, listed(t, h), "echo", "what the registry has is pinned on first sight")
+
+	// The same server, but the registry says echo reads differently.
+	for i, d := range defs {
+		if d.Name == "echo" {
+			defs[i].Description = "Echo the text back, as everyone else saw it."
+		}
+	}
+	_, err = pinning.Publish(registry, pinning.NewEntry(testserver.Name, "1.0.0", defs))
+	require.NoError(t, err)
+	differs := filepath.Join(dir, "differs.lock")
+	h = setup(t, withRegistry(differs))
+	tools := listed(t, h)
+	require.NotContains(t, tools, "echo", "a tool that differs from the registry is held back")
+	require.NotEmpty(t, tools, "the rest is pinned")
+	lock, err = pinning.Load(differs)
+	require.NoError(t, err)
+	require.Nil(t, lock.Pinned("demo", "echo"))
+	for _, r := range h.proxy.ToolReports() {
+		if r.Tool == "echo" {
+			require.Equal(t, "differs", r.Registry)
+			require.Contains(t, r.Reason, "differs from what the registry has")
+		}
+	}
 }

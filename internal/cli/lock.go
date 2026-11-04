@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,10 +17,13 @@ import (
 
 func newLockCmd(g *globals) *cobra.Command {
 	var (
-		check  bool
-		trust  []string
-		asJSON bool
-		colour string
+		check    bool
+		trust    []string
+		asJSON   bool
+		colour   string
+		compare  string
+		publish  string
+		matching bool
 	)
 	cmd := &cobra.Command{
 		Use:   "lock",
@@ -35,6 +39,15 @@ definition with instructions hidden in it, this is where you look at it:
 	agentgate lock --trust fs.read_file   accept one tool as it is now
 	agentgate lock --trust '*'            accept everything as it is now
 	agentgate lock --check                exit 1 unless everything is pinned and clean
+
+A registry is a directory or web server of trusted definitions, one file
+per server version, that a team (or anyone) keeps, in a git repository say.
+Comparing against one checks the first sight too, which pinning alone
+trusts blindly:
+
+	agentgate lock --compare ./registry                   what differs from it
+	agentgate lock --compare ./registry --trust-matching  trust what matches it
+	agentgate lock --publish ./registry                   add what you trust to it
 
 A running agentgate notices the lockfile change and releases a trusted tool
 without a restart.`,
@@ -78,16 +91,51 @@ without a restart.`,
 				fmt.Fprintln(cmd.OutOrStdout())
 			}
 
+			var agreed []registryResult
+			if compare != "" {
+				agreed = compareRegistry(cmd.Context(), compare, p.Upstreams(), p.ToolReports())
+				if matching {
+					for _, r := range agreed {
+						for _, c := range r.Comparisons {
+							if c.Agree != pinning.AgreeSame {
+								continue
+							}
+							trusted, err := p.Trust(cmd.Context(), r.Upstream+"."+c.Ref)
+							if err != nil && !errors.Is(err, proxy.ErrNoSuchTool) {
+								return err
+							}
+							for _, t := range trusted {
+								if t.Status != pinning.StatusPinned || len(t.Findings) > 0 {
+									fmt.Fprintf(cmd.OutOrStdout(), "trusted %s.%s, as the registry has it (was %s)\n", t.Upstream, t.Tool, t.Status)
+								}
+							}
+						}
+					}
+				}
+			}
+
 			reports := p.ToolReports()
 			if asJSON {
-				if err := writeJSON(cmd.OutOrStdout(), reports); err != nil {
+				var out any = reports
+				if compare != "" {
+					out = map[string]any{"reports": reports, "registry": agreed}
+				}
+				if err := writeJSON(cmd.OutOrStdout(), out); err != nil {
 					return err
 				}
 			} else {
 				w := &lineWriter{out: cmd.OutOrStdout(), colour: useColour}
 				printLock(w, cfg, reports)
+				if compare != "" {
+					printRegistry(w, compare, agreed)
+				}
 			}
-			if check && !lockClean(reports) {
+			if publish != "" {
+				if err := publishRegistry(cmd.OutOrStdout(), publish, p.Upstreams(), reports); err != nil {
+					return err
+				}
+			}
+			if check && (!lockClean(reports) || !registryClean(agreed)) {
 				return errExitDenied
 			}
 			return nil
@@ -95,6 +143,9 @@ without a restart.`,
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "exit 1 if any tool is new, changed, removed, unpinned or flagged")
 	cmd.Flags().StringArrayVar(&trust, "trust", nil, "trust a tool as it is offered now, as upstream.tool; '*' trusts everything (repeatable)")
+	cmd.Flags().StringVar(&compare, "compare", "", "compare with a registry: a directory, a base URL, or one entry file")
+	cmd.Flags().BoolVar(&matching, "trust-matching", false, "with --compare, trust every definition the registry has exactly as offered")
+	cmd.Flags().StringVar(&publish, "publish", "", "write what is trusted into a registry directory")
 	cmd.Flags().BoolVar(&asJSON, "json", false, "print the reports as JSON")
 	cmd.Flags().StringVar(&colour, "color", "auto", "colour the output: auto, always or never")
 	return cmd
@@ -165,12 +216,19 @@ func printLock(w *lineWriter, cfg *config.Config, reports []proxy.ToolReport) {
 }
 
 func printDefinitionChange(w *lineWriter, before, after pinning.Definition) {
+	printDefinitionDiff(w, before, after, "pinned", "now")
+}
+
+// printDefinitionDiff shows the fields two definitions differ in, labelled.
+func printDefinitionDiff(w *lineWriter, before, after pinning.Definition, was, is string) {
+	width := max(len(was), len(is)) + 1
+	pad := strings.Repeat(" ", width+5)
 	field := func(name, a, b string) {
 		if a == b {
 			return
 		}
-		fmt.Fprintf(w.out, "  %s\n    pinned: %s\n    now:    %s\n", name,
-			w.revealed(indentText(pinning.Reveal(a), "            ")), w.revealed(indentText(pinning.Reveal(b), "            ")))
+		fmt.Fprintf(w.out, "  %s\n    %-*s %s\n    %-*s %s\n", name,
+			width, was+":", w.revealed(indentText(pinning.Reveal(a), pad)), width, is+":", w.revealed(indentText(pinning.Reveal(b), pad)))
 	}
 	field("title", before.Title, after.Title)
 	field("description", before.Description, after.Description)

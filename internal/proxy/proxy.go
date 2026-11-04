@@ -56,6 +56,10 @@ type Proxy struct {
 	lockMu    sync.Mutex
 	lock      *pinning.Lockfile
 	lockStamp fileStamp
+	// registry caches the registry entries of server versions, nil for one
+	// the registry does not have.
+	registryMu sync.Mutex
+	registry   map[string]*pinning.Entry
 
 	sessions sync.Map // *mcp.ServerSession -> *sessionState
 	// hosts tracks which host session each upstream is serving a call for.
