@@ -79,6 +79,9 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 		if d, hit := p.flowHit(cfg, st, bindingNames(b), canary.Strings(anyMap(call.Args))); hit && rank(d.Action) > rank(decision.Action) {
 			decision = d
 		}
+		if d, hit := p.behaviorBefore(cfg, st, b.Exposed, args); hit && rank(d.Action) > rank(decision.Action) {
+			decision = d
+		}
 	}
 
 	rec := &audit.Call{
@@ -200,6 +203,11 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	var produced []string
 	rec.Labels, produced = p.forwardedAll(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
+	if extra := p.behaviorAfter(cfg, st, b.Exposed, rec.Result, time.Since(started), produced); len(extra) > 0 {
+		if added := st.earn(extra...); len(added) > 0 {
+			rec.Labels = append(rec.Labels, added...)
+		}
+	}
 	if res := policy.ResultFromJSON(rec.Result); res != nil {
 		if p.taintsFrom(st, b.Exposed, produced) || p.taintsFrom(st, b.Upstream+"."+b.Name, produced) {
 			p.taint(st, res.Text, b.Exposed)

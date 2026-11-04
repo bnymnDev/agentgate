@@ -71,6 +71,9 @@ const (
 	// LabelInjectionSuspected marks a session that got a tool result with
 	// hidden text or instructions addressed to the model.
 	LabelInjectionSuspected = "injection-suspected"
+	// LabelBehaviorAnomaly marks a session in which a tool did something
+	// far outside what it did before.
+	LabelBehaviorAnomaly = "behavior-anomaly"
 )
 
 // Ids used for decisions that do not come from a rule in the rules list.
@@ -91,7 +94,9 @@ const (
 	// host: to have its model answer something, or to ask the user.
 	RuleSampling = "sampling"
 	// RuleFlow decides a call that carries data a flow contract forbids.
-	RuleFlow        = "flow"
+	RuleFlow = "flow"
+	// RuleBehavior decides a call that is outside what its tool did before.
+	RuleBehavior    = "behavior"
 	RuleElicitation = "elicitation"
 )
 

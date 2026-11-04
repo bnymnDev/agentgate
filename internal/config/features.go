@@ -72,15 +72,18 @@ const (
 	// EventInjection fires when a tool result carries hidden text or
 	// instructions addressed to the model.
 	EventInjection = "injection"
+	// EventAnomaly fires when a tool does something far outside what it
+	// did before (behavior).
+	EventAnomaly = "anomaly"
 )
 
 var knownEvents = map[string]bool{
 	EventDeny: true, EventAsk: true, EventHoneypot: true, EventFreeze: true, EventError: true, EventShadow: true,
-	EventDrift: true, EventExfiltration: true, EventInjection: true,
+	EventDrift: true, EventExfiltration: true, EventInjection: true, EventAnomaly: true,
 }
 
 // DefaultWebhookEvents are sent when a webhook does not say which it wants.
-var DefaultWebhookEvents = []string{EventDeny, EventAsk, EventHoneypot, EventFreeze, EventDrift, EventExfiltration, EventInjection}
+var DefaultWebhookEvents = []string{EventDeny, EventAsk, EventHoneypot, EventFreeze, EventDrift, EventExfiltration, EventInjection, EventAnomaly}
 
 // Wants reports whether the webhook subscribed to an event.
 func (w *Webhook) Wants(event string) bool {
@@ -500,4 +503,58 @@ func normalizeFlows(flows []Flow) []error {
 		}
 	}
 	return errs
+}
+
+// Behavior compares what every call does with a profile of what the tool
+// did before, learned from the audit log by agentgate behavior learn.
+type Behavior struct {
+	// Profile is the profile file. Empty switches the comparison off.
+	Profile string `yaml:"profile"`
+	// Mode is what a call with an argument the tool never took does: warn
+	// (the default) reports it, ask and deny decide the call. What a call
+	// returned is only known afterwards, so an oversized or slow answer, or
+	// a label the tool never earned, is always reported and labels the
+	// session behavior-anomaly.
+	Mode string `yaml:"mode"`
+	// MinCalls is how many calls a tool needs in the profile before it is
+	// compared at all. The default is 20.
+	MinCalls int `yaml:"min_calls"`
+	// Factor is how many times its usual 95th percentile a result size or
+	// a duration may be. The default is 4.
+	Factor float64 `yaml:"factor"`
+}
+
+// Enabled reports whether calls are compared with a profile.
+func (b *Behavior) Enabled() bool { return b.Profile != "" && b.Mode != "off" }
+
+func (b *Behavior) normalize(configPath string) error {
+	var errs []error
+	switch b.Mode {
+	case "":
+		b.Mode = "warn"
+	case "off", "warn", "ask", "deny":
+	default:
+		errs = append(errs, fmt.Errorf("behavior.mode: unknown mode %q, use off, warn, ask or deny", b.Mode))
+	}
+	if b.MinCalls == 0 {
+		b.MinCalls = 20
+	}
+	if b.Factor == 0 {
+		b.Factor = 4
+	}
+	if b.MinCalls < 1 || b.Factor < 1 {
+		errs = append(errs, errors.New("behavior: min_calls and factor must be at least 1"))
+	}
+	if b.Profile != "" {
+		p, err := ExpandPath(b.Profile)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("behavior.profile: %w", err))
+		} else {
+			if !filepath.IsAbs(p) && configPath != "" {
+				p = filepath.Join(filepath.Dir(configPath), p)
+			}
+			b.Profile = p
+		}
+	}
+	return errors.Join(errs...)
 }

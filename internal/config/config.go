@@ -47,6 +47,7 @@ type Config struct {
 	Taint           Taint         `yaml:"taint"`
 	SharedLabels    SharedLabels  `yaml:"shared_labels"`
 	Flows           []Flow        `yaml:"flows"`
+	Behavior        Behavior      `yaml:"behavior"`
 	Telemetry       Telemetry     `yaml:"telemetry"`
 
 	// Path is the file the config was read from. It is not part of the file.
@@ -548,6 +549,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, err)
 	}
 	errs = append(errs, normalizeFlows(c.Flows)...)
+	if err := c.Behavior.normalize(c.Path); err != nil {
+		errs = append(errs, err)
+	}
 	if err := c.SharedLabels.normalize(); err != nil {
 		errs = append(errs, err)
 	}

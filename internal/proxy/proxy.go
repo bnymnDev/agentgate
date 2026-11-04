@@ -67,6 +67,8 @@ type Proxy struct {
 	spend dailySpend
 	// shared is what other sessions earned, for shared_labels.
 	shared sharedLabels
+	// behavior is the profile calls are compared with.
+	behavior behaviorCache
 	// hosts tracks which host session each upstream is serving a call for.
 	hosts hostSessions
 
