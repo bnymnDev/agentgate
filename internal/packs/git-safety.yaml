@@ -7,7 +7,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+push\b[^;&|]*\b(main|master)\b'
+        shell_regex: '(?i)\bgit\s+push\b[^;&|]*\b(main|master)\b'
     action: ask
     reason: "this pushes straight to main"
 
@@ -15,7 +15,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+push\b[^;&|]*(--tags|--follow-tags|refs/tags/)'
+        shell_regex: '(?i)\bgit\s+push\b[^;&|]*(--tags|--follow-tags|refs/tags/)'
     action: ask
     reason: "pushed tags are hard to take back"
 
@@ -23,7 +23,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+(branch\s+(-D|--delete\s+--force|-d\s+-f)|push\s+[^;&|]*(--delete|\s:[^\s;&|]+))'
+        shell_regex: '(?i)\bgit\s+(branch\s+(-D|--delete\s+--force|-d\s+-f)|push\s+[^;&|]*(--delete|\s:[^\s;&|]+))'
     action: ask
     reason: "this deletes a branch"
 
@@ -31,7 +31,7 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+(filter-branch|filter-repo|reflog\s+(expire|delete)|update-ref\s+-d|replace\s|rebase\s+[^;&|]*\b(main|master)\b)'
+        shell_regex: '(?i)\bgit\s+(filter-branch|filter-repo|reflog\s+(expire|delete)|update-ref\s+-d|replace\s|rebase\s+[^;&|]*\b(main|master)\b)'
     action: ask
     reason: "this rewrites history"
 
@@ -39,6 +39,6 @@ rules:
     tool: "*"
     when:
       "args.{command,cmd,script,code,input}":
-        regex: '(?i)\bgit\s+config\s+(--global|--system)\b'
+        shell_regex: '(?i)\bgit\s+config\s+(--global|--system)\b'
     action: ask
     reason: "this changes git configuration outside the repository"

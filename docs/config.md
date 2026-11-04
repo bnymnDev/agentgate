@@ -404,6 +404,13 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--json` | print the statement and results as JSON |  |
 | `--to` | a destination; repeatable, replaces audit.anchor.to |  |
 
+### `bill [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print the bill as JSON |  |
+| `--month` | the month, as YYYY-MM; default this one |  |
+
 ### `canary list [flags]`
 
 | Flag | What it does | Default |
@@ -453,6 +460,14 @@ config checks for it on every call. `agentgate status` prints the path.
 |---|---|---|
 | `--json` | print the checks as JSON |  |
 | `--offline` | do not start the upstream servers or reach out to the network |  |
+
+### `fuzz [test-file] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print the report as JSON |  |
+| `--markdown` | print the report as Markdown |  |
+| `--run` | only fuzz the tests whose name matches this regex |  |
 
 ### `init [flags]`
 

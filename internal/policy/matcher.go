@@ -55,15 +55,29 @@ type Matcher struct {
 	Exists    *bool    `yaml:"exists" json:"exists,omitempty"`
 	Includes  *any     `yaml:"includes" json:"includes,omitempty"`
 	Excludes  *any     `yaml:"excludes" json:"excludes,omitempty"`
+	// ShellRegex and SQLRegex match a regex against the value as a shell or
+	// a database reads it, rather than as it was written; see ShellView and
+	// SQLView. The not_ forms are their negations.
+	ShellRegex    *string `yaml:"shell_regex" json:"shell_regex,omitempty"`
+	NotShellRegex *string `yaml:"not_shell_regex" json:"not_shell_regex,omitempty"`
+	SQLRegex      *string `yaml:"sql_regex" json:"sql_regex,omitempty"`
+	NotSQLRegex   *string `yaml:"not_sql_regex" json:"not_sql_regex,omitempty"`
+	// PathPrefix and NotPathPrefix compare paths the way a file system
+	// resolves them: /repo/../etc/passwd is /etc/passwd, and /repo matches
+	// /repo/a but not /repository.
+	PathPrefix    *string `yaml:"path_prefix" json:"path_prefix,omitempty"`
+	NotPathPrefix *string `yaml:"not_path_prefix" json:"not_path_prefix,omitempty"`
 
-	re  *regexp.Regexp
-	nre *regexp.Regexp
+	re   *regexp.Regexp
+	nre  *regexp.Regexp
+	view func(string) string
 }
 
 var matcherKeys = map[string]bool{
 	"equals": true, "not_equals": true, "regex": true, "not_regex": true, "prefix": true,
 	"not_prefix": true, "in": true, "gt": true, "lt": true, "exists": true,
-	"includes": true, "excludes": true,
+	"includes": true, "excludes": true, "shell_regex": true, "not_shell_regex": true,
+	"sql_regex": true, "not_sql_regex": true, "path_prefix": true, "not_path_prefix": true,
 }
 
 // UnmarshalYAML accepts the full mapping form as well as two shorthands:
@@ -165,7 +179,8 @@ func (m *Matcher) compile(path string) error {
 	for _, set := range []bool{
 		m.Equals != nil, m.NotEquals != nil, m.Regex != nil, m.NotRegex != nil, m.Prefix != nil,
 		m.NotPrefix != nil, m.In != nil, m.Gt != nil, m.Lt != nil, m.Exists != nil,
-		m.Includes != nil, m.Excludes != nil,
+		m.Includes != nil, m.Excludes != nil, m.ShellRegex != nil, m.NotShellRegex != nil,
+		m.SQLRegex != nil, m.NotSQLRegex != nil, m.PathPrefix != nil, m.NotPathPrefix != nil,
 	} {
 		if set {
 			n++
@@ -173,7 +188,7 @@ func (m *Matcher) compile(path string) error {
 	}
 	switch {
 	case n == 0:
-		return fmt.Errorf("%s: matcher is empty, expected one of equals, not_equals, regex, not_regex, prefix, not_prefix, in, gt, lt, exists, includes, excludes", path)
+		return fmt.Errorf("%s: matcher is empty, expected one of equals, not_equals, regex, not_regex, shell_regex, not_shell_regex, sql_regex, not_sql_regex, prefix, not_prefix, path_prefix, not_path_prefix, in, gt, lt, exists, includes, excludes", path)
 	case n > 1 && (m.Gt == nil || m.Lt == nil || n != 2):
 		return fmt.Errorf("%s: matcher sets %d conditions, expected exactly one (gt+lt may be combined)", path, n)
 	}
@@ -186,19 +201,29 @@ func (m *Matcher) compile(path string) error {
 			return fmt.Errorf("%s: %s takes a single value; write one condition per value in a when: list", path, name)
 		}
 	}
-	if m.Regex != nil {
-		re, err := regexp.Compile(*m.Regex)
-		if err != nil {
-			return fmt.Errorf("%s: invalid regex %q: %w", path, *m.Regex, err)
+	m.view = nil
+	for _, r := range []struct {
+		src  *string
+		neg  bool
+		view func(string) string
+	}{
+		{m.Regex, false, nil}, {m.NotRegex, true, nil},
+		{m.ShellRegex, false, ShellView}, {m.NotShellRegex, true, ShellView},
+		{m.SQLRegex, false, SQLView}, {m.NotSQLRegex, true, SQLView},
+	} {
+		if r.src == nil {
+			continue
 		}
-		m.re = re
-	}
-	if m.NotRegex != nil {
-		re, err := regexp.Compile(*m.NotRegex)
+		re, err := regexp.Compile(*r.src)
 		if err != nil {
-			return fmt.Errorf("%s: invalid regex %q: %w", path, *m.NotRegex, err)
+			return fmt.Errorf("%s: invalid regex %q: %w", path, *r.src, err)
 		}
-		m.nre = re
+		if r.neg {
+			m.nre = re
+		} else {
+			m.re = re
+		}
+		m.view = r.view
 	}
 	return nil
 }
@@ -259,10 +284,14 @@ func (m *Matcher) matchOne(v any) bool {
 		return strings.HasPrefix(stringify(v), *m.Prefix)
 	case m.NotPrefix != nil:
 		return !strings.HasPrefix(stringify(v), *m.NotPrefix)
+	case m.PathPrefix != nil:
+		return underPath(stringify(v), *m.PathPrefix)
+	case m.NotPathPrefix != nil:
+		return !underPath(stringify(v), *m.NotPathPrefix)
 	case m.re != nil:
-		return m.re.MatchString(stringify(v))
+		return m.re.MatchString(m.text(v))
 	case m.nre != nil:
-		return !m.nre.MatchString(stringify(v))
+		return !m.nre.MatchString(m.text(v))
 	case m.In != nil:
 		for _, want := range m.In {
 			if jsonEqual(v, want) {

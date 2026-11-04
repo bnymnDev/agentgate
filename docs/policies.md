@@ -172,6 +172,9 @@ Friday.
 | `not_regex` | the value does not match this regular expression | <code>args.sql: { not_regex: '(?i)\bwhere\b' }</code> |
 | `prefix` | the value starts with this string | <code>args.path: { prefix: "/etc/" }</code> |
 | `not_prefix` | the value does not start with this string | <code>args.path: { not_prefix: "/srv/app/" }</code> |
+| `shell_regex`, `not_shell_regex` | like `regex`, on the command as a shell reads it: quotes join (`"rm"`, `r''m` are `rm`), escapes and `$IFS` are undone, blanks collapse | <code>args.command: { shell_regex: '\brm\s+-rf' }</code> |
+| `sql_regex`, `not_sql_regex` | like `regex`, on the statement as a database reads it: comments are spaces, whitespace collapses | <code>args.sql: { sql_regex: '(?i)\bdelete\s+from\b' }</code> |
+| `path_prefix`, `not_path_prefix` | the path, with `.` and `..` resolved, is inside this directory (or is it) | <code>args.path: { not_path_prefix: "/srv/app" }</code> |
 | `in` | the value is one of these | <code>args.env: { in: ["prod", "staging"] }</code> |
 | `gt`, `lt` | the value is a number above / below this; both may be combined | <code>args.amount: { gt: 10, lt: 100 }</code> |
 | `exists` | the path is present (`true`) or absent (`false`) | <code>args.dryRun: { exists: false }</code> |
