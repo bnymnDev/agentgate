@@ -103,7 +103,7 @@ jobs:
       # Installs agentgate, checksum-verified, and puts it on the PATH.
       # With a config, validates it, runs its policy tests, and fails the
       # step on a lint warning or a failing test.
-      - uses: bnymnDev/agentgate@v0.4.0
+      - uses: bnymnDev/agentgate@v0.5.0
         with:
           config: .github/agentgate.yaml
 
@@ -113,7 +113,7 @@ jobs:
       # Writes what the agent did to the job summary, verifies the audit
       # log's hash chain, and fails the job on a canary, a honeypot or a
       # quarantined tool.
-      - uses: bnymnDev/agentgate/report@v0.4.0
+      - uses: bnymnDev/agentgate/report@v0.5.0
         if: always()
         with:
           config: .github/agentgate.yaml

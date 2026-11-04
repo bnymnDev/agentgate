@@ -7,7 +7,7 @@ branding:
 
 inputs:
   version:
-    description: The agentgate release to install, e.g. v0.4.0, or latest.
+    description: The agentgate release to install, e.g. v0.5.0, or latest.
     default: latest
   binary:
     description: Use this agentgate binary instead of downloading one.
@@ -144,12 +144,12 @@ runs:
         AGENTGATE: ${{ steps.install.outputs.path }}
       run: |
         set -uo pipefail
-        # skills came after 0.4.0. A check that was asked for and cannot run
+        # skills came with 0.5.0. A check that was asked for and cannot run
         # fails rather than passing without having looked.
         installed=$("$AGENTGATE" --version | awk '{print $3}')
         case "$installed" in
           0.[0-4].*|v0.[0-4].*)
-            echo "::error::agentgate $installed has no skills command; it comes with the release after 0.4.0"
+            echo "::error::agentgate $installed has no skills command; it comes with 0.5.0"
             exit 1 ;;
         esac
         args=(skills verify --dir "$SKILLS_DIR")

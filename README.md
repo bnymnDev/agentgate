@@ -442,13 +442,13 @@ approval:
 **In CI.** An agent in a workflow has the same tools and nobody watching:
 
 ```yaml
-- uses: bnymnDev/agentgate@v0.4.0
+- uses: bnymnDev/agentgate@v0.5.0
   with:
     config: .github/agentgate.yaml       # validated, linted, its tests run
 
 # ... the agent runs, its MCP servers behind agentgate ...
 
-- uses: bnymnDev/agentgate/report@v0.4.0
+- uses: bnymnDev/agentgate/report@v0.5.0
   if: always()
   with:
     config: .github/agentgate.yaml
