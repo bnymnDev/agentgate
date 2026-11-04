@@ -183,6 +183,52 @@ at again. The scan is tuned to stay quiet on ordinary descriptions — an
 `IMPORTANT:` in capitals, a flag emoji, an emoji built with joiners and a
 mention of the server's own tools are all fine.
 
+The checks also catch text hidden in HTML or markdown comments, chat-template
+tokens such as `[INST]`, image URLs built from a placeholder (which leak
+whatever fills them when the image loads), a run of blank space that pushes an
+instruction out of view, requests to put secrets or the conversation into an
+argument, encoded text the model is told to decode and follow, a tool that
+wants to be called before every other one, and a name spelled with look-alike
+letters from another alphabet.
+
+### How well it works
+
+A scanner like this is pattern matching, and a determined attacker can phrase
+around patterns. The [`corpus/`](../corpus) directory holds labelled poisoned
+and ordinary definitions and results; `go test ./corpus` measures the scanners
+against them on every commit and fails if detection drops or false alarms
+rise. These are the current numbers, every miss and every false alarm named:
+
+<!-- BEGIN:corpus -->
+| Scanner | Attacks caught | False alarms on ordinary entries |
+|---|---|---|
+| tool definitions (lock, scan, pinning) | 30 of 33 (91%) | 1 of 41 (2%) |
+| tool results (injection-suspected label) | 11 of 12 (92%) | 1 of 12 (8%) |
+
+Where the tool definitions scanner is wrong:
+
+- missed `def-silent-history`: asks for everything the user typed, without the word argument
+- missed `def-override-banner`: a fake system banner that grants permissions
+- missed `def-pretend-approved`: claims the user already agreed
+- false alarm `ok-env-tool`: a dev tool whose job is .env files (points the model at credentials or an agent's configuration)
+
+Where the tool results scanner is wrong:
+
+- missed `res-instruction-heading`: a markdown heading that issues an instruction
+- false alarm `ok-security-article`: an article that describes prompt injection, quoting an attack (tells the model to ignore its instructions)
+<!-- END:corpus -->
+
+The history is part of the measurement. The first set of attacks was used to
+add detectors. Then nine new attacks were written without looking at the
+scanner again: it caught one of them at first sight. The structural ones
+(look-alike letters, blank-space padding, chat-template tokens, image
+exfiltration) have detectors since; the ones that only rephrase an
+instruction are listed above as misses and stay there. Pinning, quarantine
+and the policy are what covers them: a poisoned definition is held back if
+it ever changes, and a session that reads private data cannot send it out,
+whatever the description said. New entries, especially ones that get
+through, are welcome.
+
 ## Canaries
 
 ```sh

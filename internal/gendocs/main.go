@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/bnymnDev/agentgate/corpus"
 	"github.com/bnymnDev/agentgate/internal/cli"
 	"github.com/bnymnDev/agentgate/internal/config"
 	"github.com/bnymnDev/agentgate/internal/packs"
@@ -40,6 +41,7 @@ func main() {
 		"packs":      packTable(),
 		"skillrules": skillRuleTable(),
 		"skillcaps":  skillCapabilityTable(),
+		"corpus":     corpusTable(),
 	}
 	changed := 0
 	for _, file := range []string{"README.md", "docs/config.md", "docs/policies.md", "docs/replay.md", "docs/guardrails.md", "docs/integrations.md", "docs/skills.md"} {
@@ -237,4 +239,17 @@ func skillCapabilityTable() string {
 
 func cell(s string) string {
 	return strings.NewReplacer("|", "\\|", "<", "&lt;", ">", "&gt;", "\n", " ").Replace(s)
+}
+
+// corpusTable measures the scanners on the public corpus.
+func corpusTable() string {
+	defs, err := corpus.ScoreDefinitions()
+	if err != nil {
+		log.Fatal(err)
+	}
+	results, err := corpus.ScoreResults()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return corpus.Markdown(defs, results)
 }
