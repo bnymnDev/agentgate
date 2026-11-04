@@ -163,6 +163,16 @@ Without the `|| true` the step fails on a finding instead. A server's own
 README can carry the result: `agentgate scan --badge -- <command>` prints a
 shields.io badge, clean or with the number of findings.
 
+### Guarding a policy
+
+`agentgate fuzz` next to `agentgate test` fails the job when a rule can be
+stepped around by spelling a call differently:
+
+```yaml
+      - run: agentgate test -c .github/agentgate.yaml
+      - run: agentgate fuzz -c .github/agentgate.yaml
+```
+
 ### A team registry
 
 `agentgate lock --publish registry/` writes every definition you trusted,
@@ -175,7 +185,18 @@ every machine and every CI job against it:
 ```
 
 or set `pinning.registry` and let the gateway check every first sight on its
-own. A raw GitHub URL of the repository works as a registry too.
+own. A raw GitHub URL of the repository works as a registry too, and
+`agentgate registry verify <url> --head <noted head>` proves its log only
+grew since the head was noted.
+
+### Every night
+
+```cron
+# what the content servers return, and what the tools did today
+0 3 * * *  agentgate probe -c ~/.agentgate/cursor.yaml --tool 'search_*' --webhook https://ntfy.sh/my-alerts
+10 3 * * * agentgate behavior check -c ~/.agentgate/cursor.yaml --since 1d || curl -d "behaviour anomalies" ntfy.sh/my-alerts
+20 3 * * * agentgate anchor -c ~/.agentgate/cursor.yaml
+```
 
 ## Containers
 

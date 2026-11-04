@@ -200,6 +200,23 @@ registry has for that server version. One that differs is reported and, in
 first use as before. `--compare` takes a single entry file or URL too, and
 `--check` makes a difference fail a CI job.
 
+Every `--publish` also appends to the registry's log: `log.jsonl`, one record
+per publication, and `head.json`, its size and a Merkle root over it in the
+shape of Certificate Transparency (RFC 6962).
+
+```sh
+agentgate registry verify ./mcp-registry
+agentgate registry verify https://example.com/mcp-registry --head 42:sha256:9f86…
+agentgate registry head ./mcp-registry --to ots:./registry-anchors
+```
+
+`verify` checks that every entry is what the log last recorded, that nothing
+was added by hand, and — given a head noted earlier — that the log only grew
+since. It lists every server version published more than once with
+different definitions, which in a registry of trusted definitions is the
+thing to look at, and `lock --compare` refuses an entry the log does not
+vouch for.
+
 ## Tool poisoning
 
 Pinning catches a change. It cannot catch a definition that was poisoned from
@@ -288,6 +305,71 @@ through; `ask` puts it in front of a human; `deny` stops it with rule
 `taint`. The values live in memory for the session only and are never
 written anywhere.
 
+## Data-flow contracts
+
+Labels say what a session has seen. A contract says where a particular piece
+of it may go:
+
+```yaml
+flows:
+  - id: no-issues-in-slack
+    from: ["github.*"]               # or label:private-data
+    to: ["slack.post*", "mail.*"]
+    reason: "nothing from GitHub goes to Slack or mail"
+```
+
+Every result of a `from` tool is fingerprinted; every call to a `to` tool is
+checked for a passage of it — 24 characters or more, copied whole, re-wrapped
+or in another case — and denied (rule id `flow`), asked about or, with
+`action: warn`, reported. The fingerprints are winnowed hashes, the technique
+plagiarism detectors use: the text itself is never kept. A summary in other
+words is not a copy and is not caught; for that, the labels and the
+`lethal-trifecta` pack are the guard.
+
+## Shared labels
+
+Agents hand work to each other: a planner starts workers, a coding agent
+starts a reviewer. A session that read a web page should not be able to wash
+the `untrusted-content` label off by asking another session to post the
+result:
+
+```yaml
+shared_labels:
+  labels: [untrusted-content, private-data]
+  within: 30m
+```
+
+A label one session earns counts for every session on the machine for the
+next thirty minutes. Every gateway writes to the same audit log, so gateways
+in other processes, started by other hosts, count too. A label passed on is
+not passed on again, so the window does not stretch.
+
+## Behaviour pinning
+
+Pinning catches a server that changes what a tool *says*. A server can keep
+saying the same and change what it *does*: a read tool that starts returning
+forty times as much, takes an argument it never took, or earns the session
+labels it never earned.
+
+```sh
+agentgate behavior learn --since 14d     # profile every tool from the audit log
+agentgate behavior check --since 1d      # what in the last day is outside it
+```
+
+```yaml
+behavior:
+  profile: agentgate.behavior.json
+  mode: warn          # warn | ask | deny, for an argument the tool never took
+```
+
+With a profile, a call with a new argument is reported, asked about or denied
+before it goes out. A result far larger than usual, a call far slower, or a
+label the tool never earned is reported afterwards, fires the `anomaly`
+webhook event, and labels the session `behavior-anomaly`, which a rule can
+act on for the rest of the session. A tool needs twenty calls in the profile
+before it is compared, and a size or duration is far outside when it is four
+times its usual 95th percentile — both can be set.
+
 ## Canaries
 
 ```sh
@@ -350,6 +432,23 @@ also takes the invisible characters out before the agent reads the result,
 so the hidden instruction never reaches the model at all. Like result
 redaction, it is off by default: it changes a result. The audit log keeps the
 result as it came — that is the evidence.
+
+### Probing for it
+
+Results only carry an injection when there is one to carry. `agentgate probe`
+goes looking:
+
+```sh
+agentgate probe -- npx -y @acme/news-mcp
+agentgate probe --tool 'search_*' --arg 'search_issues={"query":"bug"}' --webhook https://ntfy.sh/my-alerts
+```
+
+It calls a server's read-only tools — the ones it marks `readOnlyHint`, or the
+ones named with `--tool` — with arguments made up from their schemas or given
+with `--arg`, and scans every answer the way the gateway does. From cron,
+against the servers whose content nobody controls, it is a smoke detector:
+exit 1 and a report to `--webhook` the night a page, an issue or a mail
+starts carrying an injection.
 
 ## Sampling and elicitation
 
@@ -588,6 +687,40 @@ question that is gone. The arguments are redacted before they are posted.
 Every `ask` also fires the `ask` webhook event, so the question can reach a
 phone before the timeout does.
 
+`quorum: 2` on a rule makes it a [two-person rule](policies.md#the-two-person-rule).
+
+### Signed approvals
+
+A click in the web UI says that someone at this machine clicked. So does a
+`curl` from the agent's own shell. With passkeys, an approval is a WebAuthn
+assertion by an enrolled passkey — a phone, a security key, the laptop's
+fingerprint reader — over a challenge that is a hash of the approval, the
+answer and the call's arguments. No program on the machine can produce it
+without the authenticator, and the signature is bound to the decision it
+records.
+
+```yaml
+approval:
+  passkeys:
+    required: true      # nothing unsigned approves; only the web UI is asked
+```
+
+```sh
+agentgate passkey enroll       # a one-time code for the Passkeys page
+```
+
+Open the web UI at `http://localhost:<port>` — browsers do not offer
+passkeys on a bare IP address — enter the code on the Passkeys page, and the
+approval buttons become signed ones. The audit log records each approval as
+`approved in the agentgate web UI by passkey "work laptop" (credential
+3a408c92110b, signature sha256:…)`. Every passkey counts as a person towards
+a quorum. A deny needs no signature: refusing is always safe.
+
+Enrolling needs the code from the terminal, so a program that can reach the
+web UI cannot add a passkey of its own. A program that can rewrite
+agentgate's own files can do anything; signed approvals assume the agent
+cannot.
+
 ## A log that cannot be quietly edited
 
 Every recorded call is a link in a hash chain: it carries a sequence number,
@@ -662,6 +795,7 @@ output you can never see otherwise.
 ```sh
 agentgate top                     # live: sessions, tools, the latest decisions
 agentgate report last -o session.html
+agentgate bill                    # what the tools cost this month
 ```
 
 `top` is a full-screen view of the last hour, refreshed every second; `q`
@@ -670,3 +804,11 @@ single HTML file — what the agent did, what was stopped and why, the tools it
 used, what it touched, and whether the audit chain still holds for its calls.
 The file has no scripts and loads nothing, so it can go into a ticket, a mail
 to whoever signs off, or an archive.
+
+In the web UI, every session has a time-travel page: a slider through its
+calls that shows, at each one, the decision then, the decision the policy in
+force now reaches, and the session as it stood — labels, calls, tokens. The
+bar of steps rings every call the current policy decides differently, which
+makes it the place to look before switching a new rule from shadow to
+enforce. `agentgate replay <session> --dry-run --until 12` is the same in a
+terminal.

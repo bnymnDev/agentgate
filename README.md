@@ -257,10 +257,13 @@ a public corpus: see [how well it works](docs/guardrails.md#how-well-it-works).
 | **A policy in YAML** | Rules on the tool, its arguments, what the server says about it, the time of day, the host, and what the session has done so far. First match wins. A denied call comes back to the agent as a reason it can read. |
 | **Packs** | Reviewed rule sets, switched on by name: `baseline`, `secrets`, `lethal-trifecta`, `git-safety`, `github`, `database`, `filesystem`, `shell-strict`, `read-only`, `ask-destructive`, `business-hours`. Your own rules always come first. |
 | **Session labels** | Facts a session picks up on its way — *read a web page*, *touched production*, *read a secret* — and rules that ask about them. That is how "never post anything after reading untrusted content" becomes one line. |
+| **Data-flow contracts and shared labels** | `flows` say what read from GitHub never goes to Slack, checked on fingerprints of the text. `shared_labels` keep a label when the work is handed to another agent. |
 | **Approvals where you are** | An `ask` rule parks the call and asks everywhere at once: the terminal, the web UI, your phone, a Telegram chat or a Slack channel, with **Allow**, **Allow for session** and **Deny** buttons. First answer wins. Nothing has to reach agentgate from outside. |
 | **Sampling and elicitation** | A server asking the host's model to answer something, or the user to fill in a form, goes through the policy like a tool call: `allow`, `ask` or `deny`, scanned for injection and recorded. |
+| **Two-person rule, signed** | `quorum: 2` on an ask rule waits for two different people. With passkeys, an approval in the web UI is a WebAuthn signature over the exact question it answers, kept in the audit log — not a click anything on the machine could fake. |
 | **Kill switch** | `agentgate freeze` denies every tool call from every agent on the machine, instantly, without dropping a connection. |
 | **Loop guard and budgets** | The same call ten times in a row is a stuck agent burning money. Per session, per tool, per minute, per token: hard caps no rule can lift. |
+| **A money budget** | Tokens and paid tools priced in euros, capped per session and per day across every agent on the machine. `agentgate bill` shows the month. |
 | **Offer less** | `tools: [get_issue, "list_*"]` on an upstream: a tool that is not offered cannot be called, and its description never reaches the model. |
 
 ### Detect
@@ -269,10 +272,13 @@ a public corpus: see [how well it works](docs/guardrails.md#how-well-it-works).
 |---|---|
 | **Tool pinning** | Every tool, prompt, resource and server instruction is pinned in a lockfile on first sight. A server that later changes what one says is reported — or, with `enforce`, it is held back until you trust it. `agentgate lock` shows the diff. |
 | **Registries** | `lock --publish` writes what you trust into a registry a team keeps in git; `lock --compare` and `pinning.registry` check the first sight against it, which pinning alone has to take on trust. |
+| **Transparency log** | A registry keeps an append-only Merkle log of every publication; `agentgate registry verify` proves it only grew and shows any server version published twice with different definitions. |
 | **Taint tracking** | The secrets a session actually read — `.env` values, tokens, passwords in URLs — are remembered, and a later call that carries one out, plain or encoded, is reported or stopped. |
+| **Behaviour pinning** | A profile of what every tool does, learned from the log. A tool that suddenly takes a new argument, returns forty times as much or earns a new label is reported, asked about or stopped. |
 | **Poisoning scan** | Instructions hidden in invisible Unicode, comments or blank space, text addressed to the model instead of describing the tool, pointers at `~/.ssh` and agent configs, one server's tool steering another's, look-alike names. Measured on a public corpus, misses included. |
 | **Canaries** | `agentgate canary new` plants a fake AWS, GitHub, OpenAI or Stripe key. Nothing legitimate ever sends it anywhere, so a call that does is stopped — in plain text, base64, hex, URL-encoded or reversed. |
 | **Injection in results** | A result with hidden text or instructions aimed at the model labels the session `injection-suspected`; `strip_invisible` takes the hidden characters out before the model reads them. |
+| **Probe** | `agentgate probe` calls a server's read-only tools and scans the answers for injection — a smoke detector for cron. |
 | **Honeypots** | A decoy tool — `db__drop_all_tables` — that nothing legitimate calls. Calling it is a prompt injection caught red-handed, and can freeze everything on the spot. |
 | **Skill lockfile** | Agent Skills — `SKILL.md` and the scripts next to it — pinned in `skills.lock` by a Merkle root over every file, each with a label of what it can do: shell, network, secrets, writes outside the project, package installs, remote content. A changed skill, a new capability or a new finding fails `agentgate skills verify` until someone approves it, and `skills diff` shows what the instructions now say, sentence by sentence. |
 | **Live view** | `agentgate tail` and `agentgate top` in any terminal, and a web UI with a live page, the approvals inbox, the pinned tools and a trust button. |
@@ -285,9 +291,11 @@ a public corpus: see [how well it works](docs/guardrails.md#how-well-it-works).
 | **Anchors** | The chain head goes out on a schedule — to a file, a webhook, or Bitcoin through OpenTimestamps — so even a log whose end was cut off fails `verify --anchors`. |
 | **Session reports** | `agentgate report last -o session.html`: one self-contained HTML file per session, for a ticket, a sign-off or an archive. |
 | **Replay and diff** | `agentgate replay <session> --dry-run` runs a real session through the current policy and shows exactly which decisions change. |
+| **Time travel** | A slider through a session in the web UI: at each call, the decision then, the decision now, and the session as it stood. |
 | **Mock servers** | `agentgate mock <session>` serves a recorded session as an MCP server — the same tools, the recorded answers, nothing real behind it. A repeatable, offline fixture. |
 | **OpenTelemetry** | One trace per session, one span per call, over OTLP to Jaeger, Tempo, Honeycomb, Datadog or anything else that speaks it. |
 | **Policy tests** | `agentgate test` runs the calls a policy must stop and the ones it must let through — with the session each is made in — and fails CI when a change to a rule or a pack breaks one. `--from <session>` turns a recorded session into a test, so a good day of work becomes the regression suite. |
+| **Fuzzing** | `agentgate fuzz` turns every test that a call must be stopped into spellings that mean the same — `env rm`, `r''m`, `DROP/**/TABLE`, `/repo/../etc` — and reports every one the policy lets through. |
 | **CI** | A GitHub Action that installs, lints and runs the policy tests, and one that writes what the agent did to the job summary and fails the job on a canary, a honeypot or a quarantined tool. |
 | **Webhooks** | Slack, Discord, ntfy or plain JSON, for denials, questions, honeypots, drift, exfiltration and injection. |
 
@@ -478,6 +486,9 @@ All of it in [docs/integrations.md](docs/integrations.md).
 | Command | What it does |
 |---|---|
 | `anchor [flags]` | Send the head of the audit chain somewhere this machine cannot rewrite |
+| `behavior` | Learn what every tool normally does, and find calls far outside it |
+| `behavior check [flags]` | List recorded calls that are outside the profile |
+| `behavior learn [flags]` | Write a profile of every tool from the audit log |
 | `bill [flags]` | What the agents' tools cost, per day and per tool, for a month |
 | `canary` | Plant fake credentials and catch them leaving |
 | `canary list [flags]` | List the canaries |
@@ -491,6 +502,10 @@ All of it in [docs/integrations.md](docs/integrations.md).
 | `init [flags]` | Put agentgate in front of the MCP servers your hosts already use |
 | `lock [flags]` | Review and trust the tool definitions pinned in the lockfile |
 | `mock <session-id> [flags]` | Serve a recorded session as a stand-in MCP server |
+| `passkey` | Enrol the passkeys that sign approvals in the web UI |
+| `passkey enroll` | Print a one-time code that allows enrolling one passkey |
+| `passkey list` | List the enrolled passkeys |
+| `passkey rm <name>` | Remove a passkey |
 | `policy` | Work with the policy file |
 | `policy add <pack> [flags]` | Switch a policy pack on in the config file |
 | `policy lint [file] [flags]` | Find rules that never fire or let more through than they seem to |
@@ -499,6 +514,10 @@ All of it in [docs/integrations.md](docs/integrations.md).
 | `policy remove <pack>` | Switch a policy pack off in the config file |
 | `policy suggest [flags]` | Write a deny-by-default policy from what the agent actually did |
 | `policy validate [file]` | Check that a config file parses and its rules make sense |
+| `probe [-- command [args...]] [flags]` | Call a server's read-only tools and scan what comes back for injection |
+| `registry` | Check a registry of trusted definitions against its append-only log |
+| `registry head <dir|url> [flags]` | Print a registry's head, or send it somewhere it cannot be rewritten |
+| `registry verify <dir|url> [flags]` | Check a registry against its log |
 | `replay <session-id> [flags]` | Re-run a recorded session through the current policy |
 | `report <session-id | last> [flags]` | Write one session as a self-contained HTML report |
 | `run [flags]` | Run the proxy |
@@ -585,10 +604,9 @@ deterministic so that `replay` can be trusted), central or multi-user
 management, and authentication in front of the web UI (it refuses to bind to
 anything but localhost unless you insist).
 
-Next: a public registry of trusted definitions for popular servers, data-flow
-rules that follow a tainted value from tool to tool, and for skills: signed
-approvals and a `SessionStart` hook that runs `skills verify` before the agent
-loads anything — the full list is in the
+Next: a public registry of trusted definitions for popular servers, and for
+skills: signed approvals and a `SessionStart` hook that runs `skills verify`
+before the agent loads anything — the full list is in the
 [skills design notes](docs/design/skills-lock.md#roadmap).
 
 ## License
