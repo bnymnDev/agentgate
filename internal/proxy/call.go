@@ -35,6 +35,7 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	args := req.Params.Arguments
 	signature := b.Exposed + "\x00" + audit.Hash(args)
+	p.inherit(ctx, cfg, st, started)
 	counts, history := st.observe(b.Exposed, signature, started)
 	counts.SpentToday = p.spentToday(ctx, cfg, started)
 	call := &policy.Call{
@@ -225,6 +226,7 @@ func (p *Proxy) forwardedAll(pol *policy.Policy, st *sessionState, call *policy.
 	cost := pol.Budget.Money.Cost(call, tokens)
 	p.spent(cost)
 	added := st.forwarded(call, tokens, cost, at, labels)
+	p.noteLabels(p.Config(), st.id, labels, at)
 	if len(added) > 0 {
 		p.log.Info("session labelled", "session", st.id, "tool", call.Tool, "labels", strings.Join(added, ","))
 	}

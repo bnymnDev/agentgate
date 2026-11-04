@@ -64,6 +64,8 @@ type Proxy struct {
 	sessions sync.Map // *mcp.ServerSession -> *sessionState
 	// spend is what every session has spent today, for the money budget.
 	spend dailySpend
+	// shared is what other sessions earned, for shared_labels.
+	shared sharedLabels
 	// hosts tracks which host session each upstream is serving a call for.
 	hosts hostSessions
 

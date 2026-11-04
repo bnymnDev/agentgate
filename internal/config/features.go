@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/bnymnDev/agentgate/internal/policy"
 )
@@ -365,3 +366,40 @@ func (t *Taint) normalize() error {
 // Normalize checks and completes the pinning settings, for a caller that
 // changed them after the config was loaded.
 func (p *Pinning) Normalize(configPath string) error { return p.normalize(configPath) }
+
+// SharedLabels lets a label one session earned count for every session on
+// the machine for a while. Agents hand work to each other — a coding agent
+// starts a reviewer, a planner starts workers — and a session that read a
+// web page should not be able to wash that off by asking another session
+// to post the result. Every gateway writes to the same audit log, so the
+// labels are shared across processes too.
+type SharedLabels struct {
+	// Labels are the labels that are shared. Empty shares none.
+	Labels []string `yaml:"labels"`
+	// Within is how long a label earned elsewhere counts. It defaults to 30m.
+	Within Duration `yaml:"within"`
+}
+
+// DefaultSharedWithin is how long a shared label counts.
+const DefaultSharedWithin = 30 * time.Minute
+
+// Enabled reports whether any label is shared.
+func (s *SharedLabels) Enabled() bool { return len(s.Labels) > 0 }
+
+func (s *SharedLabels) normalize() error {
+	if !s.Enabled() {
+		return nil
+	}
+	if s.Within == 0 {
+		s.Within = Duration(DefaultSharedWithin)
+	}
+	if time.Duration(s.Within) < 0 {
+		return errors.New("shared_labels.within: must not be negative")
+	}
+	for i, l := range s.Labels {
+		if strings.TrimSpace(l) == "" {
+			return fmt.Errorf("shared_labels.labels[%d]: empty", i)
+		}
+	}
+	return nil
+}

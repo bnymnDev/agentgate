@@ -45,6 +45,7 @@ type Config struct {
 	Pinning         Pinning       `yaml:"pinning"`
 	Canaries        Canaries      `yaml:"canaries"`
 	Taint           Taint         `yaml:"taint"`
+	SharedLabels    SharedLabels  `yaml:"shared_labels"`
 	Telemetry       Telemetry     `yaml:"telemetry"`
 
 	// Path is the file the config was read from. It is not part of the file.
@@ -543,6 +544,9 @@ func (c *Config) normalize() error {
 		errs = append(errs, err)
 	}
 	if err := c.Canaries.normalize(c.Audit.Path); err != nil {
+		errs = append(errs, err)
+	}
+	if err := c.SharedLabels.normalize(); err != nil {
 		errs = append(errs, err)
 	}
 	if err := c.Taint.normalize(); err != nil {

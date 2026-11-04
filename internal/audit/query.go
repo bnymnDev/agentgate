@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -447,6 +448,29 @@ func (s *Store) ForwardedSince(ctx context.Context, since time.Time) ([]Forwarde
 		}
 		f.TS = time.UnixMilli(ts)
 		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// LabelsSince returns, for every label earned at or after since, the
+// sessions that earned it.
+func (s *Store) LabelsSince(ctx context.Context, since time.Time) (map[string][]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT session_id, labels FROM calls WHERE ts >= ? AND labels != ''`, since.UnixMilli())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var sess, labels string
+		if err := rows.Scan(&sess, &labels); err != nil {
+			return nil, err
+		}
+		for _, l := range strings.Split(labels, ",") {
+			if l != "" && !slices.Contains(out[l], sess) {
+				out[l] = append(out[l], sess)
+			}
+		}
 	}
 	return out, rows.Err()
 }

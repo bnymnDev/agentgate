@@ -325,3 +325,14 @@ func TestManyAnchors(t *testing.T) {
 	require.NoError(t, err)
 	require.Contains(t, fmt.Sprint(report.Problems), "no longer reaches the anchor")
 }
+
+func TestLabelsSince(t *testing.T) {
+	store := openTemp(t, Options{})
+	sess := record(t, store, 2, time.Now())
+	got, err := store.LabelsSince(context.Background(), time.Now().Add(-time.Hour))
+	require.NoError(t, err)
+	require.Equal(t, map[string][]string{"private-data": {sess.ID}}, got)
+	got, err = store.LabelsSince(context.Background(), time.Now().Add(time.Hour))
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
