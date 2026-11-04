@@ -1,0 +1,35 @@
+{{define "content"}}
+<hgroup>
+  <h1>Passkeys</h1>
+  <p>With passkeys, an approval is signed by the authenticator of the person who gave it — a phone, a security key, a fingerprint reader — over the exact question it answers. The audit log keeps the signature.</p>
+</hgroup>
+{{if not .Enabled}}
+<article><p>Passkeys are off. Set <code>approval.passkeys</code> in the config and open this page at <code>http://localhost:…</code>.</p></article>
+{{else}}
+{{if .Required}}<p><span class="badge ask">required</span> An approval that is not signed with one of these is refused.</p>{{end}}
+{{if .Passkeys}}
+<table>
+  <thead><tr><th>Name</th><th>Enrolled</th><th>Last used</th></tr></thead>
+  <tbody>
+  {{range .Passkeys}}<tr><td>{{.Name}}</td><td>{{ts .CreatedAt}}</td><td>{{if .LastUsed.IsZero}}never{{else}}{{ts .LastUsed}}{{end}}</td></tr>{{end}}
+  </tbody>
+</table>
+{{else}}
+<article><p class="muted">No passkey enrolled yet.</p></article>
+{{end}}
+<article>
+  <header><strong>Enrol a passkey</strong></header>
+  <p>Run <code>agentgate passkey enroll</code> in a terminal for a one-time code. A program that can reach this page cannot add a passkey without it.</p>
+  <form id="passkey-enroll">
+    <fieldset class="grid">
+      <input name="name" placeholder="name, e.g. work laptop" required aria-label="Name">
+      <input name="code" placeholder="one-time code" required aria-label="Code" autocomplete="off">
+      <button type="submit">Enrol</button>
+    </fieldset>
+    <p id="passkey-status" class="muted" role="status"></p>
+  </form>
+</article>
+<p class="muted"><small>Kept in <code>{{.Store}}</code>.</small></p>
+<script src="/static/passkeys.js" defer></script>
+{{end}}
+{{end}}

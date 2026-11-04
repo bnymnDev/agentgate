@@ -269,7 +269,7 @@ func TestApprovalButtons(t *testing.T) {
 			v := <-done
 			require.Equal(t, tc.wantAllow, v.Action == policy.ActionAllow)
 			require.Equal(t, tc.wantSession, v.Session)
-			require.Contains(t, v.Reason, "the web UI")
+			require.Contains(t, v.Reason, "agentgate web UI")
 		})
 	}
 
@@ -349,4 +349,20 @@ func TestTimeTravel(t *testing.T) {
 	require.Contains(t, body, "0 of 1 calls get a different decision")
 	require.Equal(t, http.StatusOK, get(t, h, "/sessions/"+sess.ID+"/travel?step=99").Code, "a step past the end is the last")
 	require.Contains(t, get(t, h, "/sessions/"+sess.ID).Body.String(), "/travel")
+}
+
+// With passkeys required, a plain click cannot approve; it can still deny.
+func TestUnsignedApprovalIsRefused(t *testing.T) {
+	cfg, err := config.Parse([]byte("version: 1\nupstreams:\n  - name: fs\n    stdio: [\"true\"]\n"))
+	require.NoError(t, err)
+	srv, err := New(Options{Config: func() *config.Config { return cfg }, Approvals: proxy.NewInbox(), PasskeysRequired: true})
+	require.NoError(t, err)
+	h := srv.Handler()
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/approvals/x/allow", nil))
+	require.Equal(t, http.StatusForbidden, rec.Code)
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/approvals/x/deny", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, http.StatusOK, get(t, h, "/passkeys").Code)
 }

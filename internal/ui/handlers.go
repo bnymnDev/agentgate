@@ -285,10 +285,12 @@ type approvalView struct {
 type approvalsData struct {
 	page
 	Pending []approvalView
+	// Signed is set when answers are signed with a passkey.
+	Signed bool
 }
 
 func (s *Server) approvalsData() *approvalsData {
-	d := &approvalsData{page: s.page("Approvals", "approvals")}
+	d := &approvalsData{page: s.page("Approvals", "approvals"), Signed: s.opts.Passkeys != nil}
 	if s.opts.Approvals == nil {
 		return d
 	}
@@ -327,7 +329,11 @@ func (s *Server) handleApprovalDecide(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "expected allow, allow-session or deny", http.StatusBadRequest)
 		return
 	}
-	if !s.opts.Approvals.Resolve(r.PathValue("id"), choice, "the web UI") {
+	if s.opts.PasskeysRequired && choice != proxy.ChoiceDeny {
+		http.Error(w, "approvals need a passkey here: answer from the Approvals page in a browser", http.StatusForbidden)
+		return
+	}
+	if !s.opts.Approvals.Resolve(r.PathValue("id"), choice, "") {
 		s.log.Info("approval no longer pending", "id", r.PathValue("id"))
 	}
 	s.renderPartial(w, "approvals", "approval-rows", s.approvalsData())
