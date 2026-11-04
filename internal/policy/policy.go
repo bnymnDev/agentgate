@@ -86,7 +86,9 @@ const (
 	RuleTaint = "taint"
 	// RuleSampling and RuleElicitation decide a server's request to the
 	// host: to have its model answer something, or to ask the user.
-	RuleSampling    = "sampling"
+	RuleSampling = "sampling"
+	// RuleFlow decides a call that carries data a flow contract forbids.
+	RuleFlow        = "flow"
 	RuleElicitation = "elicitation"
 )
 

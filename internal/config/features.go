@@ -403,3 +403,101 @@ func (s *SharedLabels) normalize() error {
 	}
 	return nil
 }
+
+// Flow is a contract about where data may go: what a session read from one
+// set of tools must not turn up in the arguments of another. agentgate
+// fingerprints what the "from" tools return and checks every call to a "to"
+// tool for a passage of it, copied, re-wrapped or in other case.
+type Flow struct {
+	// ID names the contract in decisions and the audit log.
+	ID string `yaml:"id"`
+	// From are the sources: tool globs over upstream.tool or the exposed
+	// name, or label:<name> for the results of calls that earned a label.
+	From []string `yaml:"from"`
+	// To are the sinks, as tool globs.
+	To []string `yaml:"to"`
+	// Action is deny (the default), ask, or warn, which reports and lets
+	// the call through.
+	Action string `yaml:"action"`
+	// Reason is what the agent and the log are told.
+	Reason string `yaml:"reason"`
+
+	from   []*regexp.Regexp
+	labels []string
+	to     []*regexp.Regexp
+}
+
+// Source reports whether a result of a call is a source of this flow:
+// its tool matches, or it earned one of the labels.
+func (f *Flow) Source(names, labels []string) bool {
+	for _, l := range labels {
+		if slices.Contains(f.labels, l) {
+			return true
+		}
+	}
+	return anyMatch(f.from, names)
+}
+
+// Sink reports whether a call to a tool is a sink of this flow.
+func (f *Flow) Sink(names []string) bool { return anyMatch(f.to, names) }
+
+func anyMatch(res []*regexp.Regexp, names []string) bool {
+	for _, re := range res {
+		for _, n := range names {
+			if re.MatchString(n) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func normalizeFlows(flows []Flow) []error {
+	var errs []error
+	seen := map[string]bool{}
+	for i := range flows {
+		f := &flows[i]
+		where := fmt.Sprintf("flows[%d]", i)
+		if f.ID == "" {
+			errs = append(errs, fmt.Errorf("%s: missing id", where))
+		} else if seen[f.ID] {
+			errs = append(errs, fmt.Errorf("%s: duplicate id %q", where, f.ID))
+		}
+		seen[f.ID] = true
+		switch f.Action {
+		case "":
+			f.Action = "deny"
+		case "deny", "ask", "warn":
+		default:
+			errs = append(errs, fmt.Errorf("%s.action: unknown action %q, use deny, ask or warn", where, f.Action))
+		}
+		if len(f.From) == 0 || len(f.To) == 0 {
+			errs = append(errs, fmt.Errorf("%s: needs both from and to", where))
+		}
+		f.from, f.labels, f.to = nil, nil, nil
+		for _, g := range f.From {
+			if l, ok := strings.CutPrefix(g, "label:"); ok {
+				f.labels = append(f.labels, l)
+				continue
+			}
+			re, err := policy.CompileGlob(g)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s.from: %w", where, err))
+				continue
+			}
+			f.from = append(f.from, re)
+		}
+		for _, g := range f.To {
+			re, err := policy.CompileGlob(g)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("%s.to: %w", where, err))
+				continue
+			}
+			f.to = append(f.to, re)
+		}
+		if f.Reason == "" {
+			f.Reason = fmt.Sprintf("flow %s: data read from %s may not go to %s", f.ID, strings.Join(f.From, ", "), strings.Join(f.To, ", "))
+		}
+	}
+	return errs
+}

@@ -20,6 +20,7 @@ import (
 	"github.com/bnymnDev/agentgate/internal/audit"
 	"github.com/bnymnDev/agentgate/internal/canary"
 	"github.com/bnymnDev/agentgate/internal/config"
+	"github.com/bnymnDev/agentgate/internal/flow"
 	"github.com/bnymnDev/agentgate/internal/killswitch"
 	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
@@ -110,6 +111,9 @@ type sessionState struct {
 	approved map[string]bool
 	// taint is what the session read from private results.
 	taint tainted
+	// flows holds, per flow contract, the fingerprints of what the session
+	// read from the flow's sources.
+	flows map[string]*flow.Set
 }
 
 // approvedForSession reports whether a human already waved this tool through

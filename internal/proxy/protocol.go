@@ -392,4 +392,5 @@ func (p *Proxy) inspectContent(ss *mcp.ServerSession, upstream, what string, con
 	if p.taintsFrom(st, what, labels) {
 		p.taint(st, text, what)
 	}
+	p.readFrom(p.Config(), st, []string{what, upstream + "." + what}, labels, text)
 }

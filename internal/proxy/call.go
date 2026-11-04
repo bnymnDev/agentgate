@@ -72,7 +72,11 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 	// A secret the session read from a private result, on its way out. The
 	// stricter of the two decides; the kill switch stays the kill switch.
 	if decision.RuleID != policy.RuleFrozen {
-		if d, hit := p.taintHit(st, string(args)+"\n"+canary.Strings(anyMap(call.Args))); hit && rank(d.Action) > rank(decision.Action) {
+		outgoing := string(args) + "\n" + canary.Strings(anyMap(call.Args))
+		if d, hit := p.taintHit(st, outgoing); hit && rank(d.Action) > rank(decision.Action) {
+			decision = d
+		}
+		if d, hit := p.flowHit(cfg, st, bindingNames(b), canary.Strings(anyMap(call.Args))); hit && rank(d.Action) > rank(decision.Action) {
 			decision = d
 		}
 	}
@@ -196,10 +200,11 @@ func (p *Proxy) dispatch(ctx context.Context, u *upstream, b ToolBinding, req *m
 
 	var produced []string
 	rec.Labels, produced = p.forwardedAll(&cfg.Policy, st, call, rec.Result, audit.TokensEst(args, rec.Result), started, builtin...)
-	if p.taintsFrom(st, b.Exposed, produced) || p.taintsFrom(st, b.Upstream+"."+b.Name, produced) {
-		if res := policy.ResultFromJSON(rec.Result); res != nil {
+	if res := policy.ResultFromJSON(rec.Result); res != nil {
+		if p.taintsFrom(st, b.Exposed, produced) || p.taintsFrom(st, b.Upstream+"."+b.Name, produced) {
 			p.taint(st, res.Text, b.Exposed)
 		}
+		p.readFrom(cfg, st, bindingNames(b), produced, res.Text)
 	}
 	p.record(st, rec)
 	return result, nil
@@ -477,4 +482,10 @@ func (p *Proxy) record(st *sessionState, rec *audit.Call) {
 		Shadow:      rec.Shadow,
 		Labels:      rec.Labels,
 	})
+}
+
+// bindingNames are the names a tool goes by: the exposed one and
+// upstream.tool.
+func bindingNames(b ToolBinding) []string {
+	return []string{b.Exposed, b.Upstream + "." + b.Name}
 }
