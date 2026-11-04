@@ -11,6 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/bnymnDev/agentgate/internal/audit"
+	"github.com/bnymnDev/agentgate/internal/pinning"
 	"github.com/bnymnDev/agentgate/internal/policy"
 )
 
@@ -245,13 +246,33 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 		}
 	}
 
-	offered := make([]offeredTool, 0, len(newTools))
+	offered := make([]offeredTool, 0, len(newTools)+len(newPrompts)+len(newResources)+len(newTemplates))
 	for _, t := range newTools {
 		d, err := definitionOf(t.orig)
 		if err != nil {
 			continue
 		}
 		offered = append(offered, offeredTool{upstream: t.binding.Upstream, exposed: t.binding.Exposed, def: d})
+	}
+	// Prompts, resources and templates are pinned and scanned like tools:
+	// the model reads their descriptions as well.
+	for _, pr := range newPrompts {
+		if d, err := promptDefinition(pr.prompt); err == nil {
+			offered = append(offered, offeredTool{upstream: pr.up.name(), exposed: d.Ref(), def: d})
+		}
+	}
+	for _, r := range newResources {
+		d := resourceDefinition(r.res)
+		offered = append(offered, offeredTool{upstream: r.up.name(), exposed: d.Ref(), def: d})
+	}
+	for _, t := range newTemplates {
+		d := templateDefinition(t.tpl)
+		offered = append(offered, offeredTool{upstream: t.up.name(), exposed: d.Ref(), def: d})
+	}
+	for _, u := range p.upstreams {
+		if d, ok := instructionsDefinition(u); ok {
+			offered = append(offered, offeredTool{upstream: u.name(), exposed: instructionsKey(u.name()), def: d})
+		}
 	}
 	held, reports := p.checkPins(cfg, offered)
 	if len(held) > 0 {
@@ -264,6 +285,33 @@ func (p *Proxy) Refresh(ctx context.Context) error {
 			kept = append(kept, t)
 		}
 		newTools = kept
+		keptPrompts := newPrompts[:0]
+		for _, pr := range newPrompts {
+			if _, h := held[pinning.KindPrompt+":"+pr.prompt.Name]; h {
+				delete(prompts, pr.prompt.Name)
+				continue
+			}
+			keptPrompts = append(keptPrompts, pr)
+		}
+		newPrompts = keptPrompts
+		keptResources := newResources[:0]
+		for _, r := range newResources {
+			if _, h := held[pinning.KindResource+":"+r.res.URI]; h {
+				delete(resources, r.res.URI)
+				continue
+			}
+			keptResources = append(keptResources, r)
+		}
+		newResources = keptResources
+		keptTemplates := newTemplates[:0]
+		for _, t := range newTemplates {
+			if _, h := held[pinning.KindTemplate+":"+t.tpl.URITemplate]; h {
+				delete(templates, t.tpl.URITemplate)
+				continue
+			}
+			keptTemplates = append(keptTemplates, t)
+		}
+		newTemplates = keptTemplates
 	}
 
 	entries := make([]audit.CatalogEntry, 0, len(newTools))

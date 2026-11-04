@@ -49,9 +49,16 @@ const (
 func Scan(d Definition, others []OtherTool) []Finding {
 	var out []Finding
 	texts := []textAt{{"name", d.Name}, {"title", d.Title}, {"description", d.Description}}
+	if d.Kind == KindInstructions {
+		texts = []textAt{{"instructions", d.Description}}
+	}
+	if d.URI != "" {
+		texts = append(texts, textAt{"uri", d.URI})
+	}
 	texts = append(texts, schemaTexts("inputSchema", d.InputSchema)...)
 	texts = append(texts, schemaTexts("outputSchema", d.OutputSchema)...)
 	texts = append(texts, schemaTexts("annotations", d.Annotations)...)
+	texts = append(texts, schemaTexts("arguments", d.Arguments)...)
 	shadow := newShadowMatcher(others)
 	for _, t := range texts {
 		out = append(out, scanText(t, shadow, true)...)

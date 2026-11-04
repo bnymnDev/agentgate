@@ -102,6 +102,9 @@ func (p *Proxy) onReadResource(ctx context.Context, method string, req mcp.Reque
 		}
 		out, readErr := session.ReadResource(ctx, params)
 		if readErr == nil {
+			if ss, ok := req.GetSession().(*mcp.ServerSession); ok && out != nil {
+				p.inspectContent(ss, u.name(), "resources/read "+params.URI, out.Contents)
+			}
 			return out, nil
 		}
 	}
@@ -139,7 +142,11 @@ func (p *Proxy) resourceHandler(u *upstream) mcp.ResourceHandler {
 		if err != nil {
 			return nil, err
 		}
-		return session.ReadResource(ctx, req.Params)
+		res, err := session.ReadResource(ctx, req.Params)
+		if err == nil && res != nil {
+			p.inspectContent(req.Session, u.name(), "resources/read "+req.Params.URI, res.Contents)
+		}
+		return res, err
 	}
 }
 
@@ -150,7 +157,11 @@ func (p *Proxy) promptHandler(u *upstream) mcp.PromptHandler {
 		if err != nil {
 			return nil, err
 		}
-		return session.GetPrompt(ctx, req.Params)
+		res, err := session.GetPrompt(ctx, req.Params)
+		if err == nil && res != nil {
+			p.inspectContent(req.Session, u.name(), "prompts/get "+req.Params.Name, res.Messages)
+		}
+		return res, err
 	}
 }
 

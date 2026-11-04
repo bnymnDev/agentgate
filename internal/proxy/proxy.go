@@ -58,6 +58,8 @@ type Proxy struct {
 	lockStamp fileStamp
 
 	sessions sync.Map // *mcp.ServerSession -> *sessionState
+	// hosts tracks which host session each upstream is serving a call for.
+	hosts hostSessions
 
 	closeOnce sync.Once
 	done      chan struct{}
@@ -132,6 +134,21 @@ func (st *sessionState) forwarded(call *policy.Call, tokens int, now time.Time, 
 	defer st.mu.Unlock()
 	st.track.Forwarded(call, tokens, now)
 	return st.track.Earn(labels...)
+}
+
+// earn adds labels the session picked up outside a call, and returns the
+// ones it did not have.
+func (st *sessionState) earn(labels ...string) []string {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.track.Earn(labels...)
+}
+
+// history is what the session has done so far.
+func (st *sessionState) history() policy.History {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	return st.track.History()
 }
 
 // hostInfo records who connected. It is called once, before the session is
@@ -310,9 +327,10 @@ func (p *Proxy) serverOptions() *mcp.ServerOptions {
 // instructions concatenates the upstream instructions, labelled by upstream, so
 // the host still gets the guidance the servers wrote.
 func (p *Proxy) instructions() string {
+	held := p.heldInstructions()
 	var parts []string
 	for _, u := range p.upstreams {
-		if s := u.instructions(); s != "" {
+		if s := u.instructions(); s != "" && !held[u.name()] {
 			parts = append(parts, fmt.Sprintf("## %s\n\n%s", u.name(), s))
 		}
 	}

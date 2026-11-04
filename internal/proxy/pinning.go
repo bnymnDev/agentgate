@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -123,11 +124,11 @@ func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool) (map[string
 		exposed := map[string]string{}
 		for _, t := range tools {
 			defs = append(defs, t.def)
-			exposed[t.def.Name] = t.exposed
+			exposed[t.def.Ref()] = t.exposed
 		}
 		var others []pinning.OtherTool
 		for _, t := range offered {
-			if t.upstream != up {
+			if t.upstream != up && t.def.Kind == "" {
 				others = append(others, pinning.OtherTool{Upstream: t.upstream, Name: t.def.Name})
 			}
 		}
@@ -149,7 +150,7 @@ func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool) (map[string
 					tr.PinnedNow, dirty = true, true
 				}
 				if live {
-					p.announceDrift(up, tr, "offers a new tool", reason)
+					p.announceDrift(up, tr, "offers a new "+r.Current.What(), reason)
 				}
 			case pinning.StatusChanged:
 				if pin.Enforced() {
@@ -157,7 +158,7 @@ func (p *Proxy) checkPins(cfg *config.Config, offered []offeredTool) (map[string
 				}
 				if live && lock.NoteDrift(r, now) {
 					dirty = true
-					p.announceDrift(up, tr, "changed a pinned tool: "+changeSummary(*r.Pinned, r.Current), reason)
+					p.announceDrift(up, tr, "changed a pinned "+r.Current.What()+": "+changeSummary(*r.Pinned, r.Current), reason)
 				}
 			case pinning.StatusRemoved:
 				reports = append(reports, tr)
@@ -197,7 +198,7 @@ func (p *Proxy) announceDrift(upstream string, tr ToolReport, what, heldReason s
 	}
 	msg := fmt.Sprintf("%s %s: %s", upstream, what, tr.Tool)
 	if heldReason != "" {
-		msg += ". The tool is hidden from the host until you trust it: agentgate lock --trust " + tr.Upstream + "." + tr.Tool
+		msg += ". It is hidden from the host until you trust it: agentgate lock --trust " + tr.Upstream + "." + tr.Tool
 	}
 	p.log.Error("tool drift", "upstream", upstream, "tool", tr.Tool, "status", string(tr.Status), "held", heldReason != "")
 	p.notify.emit(Event{
@@ -223,7 +224,7 @@ func (p *Proxy) announceFindings(upstream string, tr ToolReport, heldReason stri
 		}
 		lines = append(lines, line)
 	}
-	msg := fmt.Sprintf("%s's tool %s looks poisoned:\n%s", upstream, tr.Tool, strings.Join(lines, "\n"))
+	msg := fmt.Sprintf("%s's %s %s looks poisoned:\n%s", upstream, tr.Current.What(), tr.Tool, strings.Join(lines, "\n"))
 	if heldReason != "" {
 		msg += "\nIt is hidden from the host until you trust it: agentgate lock --trust " + tr.Upstream + "." + tr.Tool
 	}
@@ -276,6 +277,12 @@ func changeSummary(before, after pinning.Definition) string {
 	}
 	if string(before.Annotations) != string(after.Annotations) {
 		parts = append(parts, "annotations")
+	}
+	if string(before.Arguments) != string(after.Arguments) {
+		parts = append(parts, "arguments")
+	}
+	if before.URI != after.URI || before.MIMEType != after.MIMEType {
+		parts = append(parts, "uri")
 	}
 	if len(parts) == 0 {
 		return "definition"
@@ -447,6 +454,97 @@ func (p *Proxy) onQuarantinedCall(req mcp.Request) (*mcp.CallToolResult, bool) {
 }
 
 // definitionOf turns a listed tool into what is pinned.
+// promptDefinition is the pinned part of a prompt.
+func promptDefinition(pr *mcp.Prompt) (pinning.Definition, error) {
+	d := pinning.Definition{Kind: pinning.KindPrompt, Name: pr.Name, Title: pr.Title, Description: pr.Description}
+	if len(pr.Arguments) > 0 {
+		raw, err := json.Marshal(pr.Arguments)
+		if err != nil {
+			return d, err
+		}
+		d.Arguments = raw
+	}
+	return pinning.DefinitionFromJSON(mustJSON(d))
+}
+
+// resourceDefinition is the pinned part of a resource: what the model is
+// told about it, not its contents, which may change as they please.
+func resourceDefinition(r *mcp.Resource) pinning.Definition {
+	d, _ := pinning.DefinitionFromJSON(mustJSON(pinning.Definition{Kind: pinning.KindResource, Name: r.Name,
+		Title: r.Title, Description: r.Description, URI: r.URI, MIMEType: r.MIMEType}))
+	return d
+}
+
+// templateDefinition is the pinned part of a resource template.
+func templateDefinition(t *mcp.ResourceTemplate) pinning.Definition {
+	d, _ := pinning.DefinitionFromJSON(mustJSON(pinning.Definition{Kind: pinning.KindTemplate, Name: t.Name,
+		Title: t.Title, Description: t.Description, URI: t.URITemplate, MIMEType: t.MIMEType}))
+	return d
+}
+
+// instructionsDefinition is an upstream's initialize instructions as a
+// definition: text the host puts in front of the model, like a description.
+func instructionsDefinition(u *upstream) (pinning.Definition, bool) {
+	text := u.instructions()
+	if text == "" {
+		return pinning.Definition{}, false
+	}
+	return pinning.Definition{Kind: pinning.KindInstructions, Name: "instructions", Description: text}, true
+}
+
+// heldInstructions says which upstreams' instructions are held back from the
+// host: changed or new since the upstream was pinned with pinning enforced,
+// or flagged by the scan with scan: quarantine. Instructions go to the host
+// once, in the initialize result, so this is decided before the downstream
+// server exists; it pins nothing — the first refresh does that.
+func (p *Proxy) heldInstructions() map[string]bool {
+	cfg := p.Config()
+	pin := &cfg.Pinning
+	if p.pinMode != PinningLive || (!pin.Enforced() && (!pin.Scans() || !pin.Quarantines())) {
+		return nil
+	}
+	p.lockMu.Lock()
+	defer p.lockMu.Unlock()
+	lock := p.lockfile(cfg)
+	if lock == nil {
+		return nil
+	}
+	held := map[string]bool{}
+	for _, u := range p.upstreams {
+		d, ok := instructionsDefinition(u)
+		if !ok {
+			continue
+		}
+		status := lock.Status(u.name(), d)
+		if pin.Enforced() && (status == pinning.StatusNew || status == pinning.StatusChanged) {
+			held[u.name()] = true
+			continue
+		}
+		if pin.Scans() && pin.Quarantines() {
+			var accepted []string
+			if pinned := lock.Pinned(u.name(), d.Ref()); pinned != nil && status == pinning.StatusPinned {
+				accepted = pinned.Accepted
+			}
+			for _, f := range pinning.Scan(d, nil) {
+				if !slices.Contains(accepted, f.Key()) {
+					held[u.name()] = true
+					break
+				}
+			}
+		}
+	}
+	return held
+}
+
+// instructionsKey is the key an upstream's held-back instructions are known
+// by; instructions are per upstream, not per name.
+func instructionsKey(upstream string) string { return pinning.KindInstructions + ":" + upstream }
+
+func mustJSON(v any) []byte {
+	raw, _ := json.Marshal(v)
+	return raw
+}
+
 func definitionOf(t *mcp.Tool) (pinning.Definition, error) {
 	raw, err := json.Marshal(t)
 	if err != nil {

@@ -33,6 +33,18 @@ func (p *Policy) Compile() error {
 	default:
 		errs = append(errs, fmt.Errorf("policy.mode: unknown mode %q, use enforce or shadow", p.Mode))
 	}
+	for _, f := range []struct {
+		name string
+		v    *Action
+	}{{"sampling", &p.Sampling}, {"elicitation", &p.Elicitation}} {
+		switch *f.v {
+		case "":
+			*f.v = ActionAllow
+		case ActionAllow, ActionAsk, ActionDeny:
+		default:
+			errs = append(errs, fmt.Errorf("policy.%s: unknown action %q, use allow, ask or deny", f.name, *f.v))
+		}
+	}
 	if p.Budget.CallsPerSession < 0 {
 		errs = append(errs, errors.New("policy.budget.calls_per_session: must not be negative"))
 	}
