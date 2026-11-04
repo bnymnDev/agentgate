@@ -433,6 +433,7 @@ All of it in [docs/integrations.md](docs/integrations.md).
 <!-- BEGIN:commands -->
 | Command | What it does |
 |---|---|
+| `anchor [flags]` | Send the head of the audit chain somewhere this machine cannot rewrite |
 | `canary` | Plant fake credentials and catch them leaving |
 | `canary list [flags]` | List the canaries |
 | `canary new [flags]` | Create a canary, and optionally the decoy file that holds it |
@@ -453,7 +454,9 @@ All of it in [docs/integrations.md](docs/integrations.md).
 | `policy suggest [flags]` | Write a deny-by-default policy from what the agent actually did |
 | `policy validate [file]` | Check that a config file parses and its rules make sense |
 | `replay <session-id> [flags]` | Re-run a recorded session through the current policy |
+| `report <session-id | last> [flags]` | Write one session as a self-contained HTML report |
 | `run [flags]` | Run the proxy |
+| `scan [-- command [args...]] [flags]` | Scan an MCP server's tools, prompts and resources for signs of poisoning |
 | `sessions [flags]` | List recorded sessions |
 | `show <session-id> [flags]` | Show the calls of one session |
 | `skills` | Pin Agent Skills in a lockfile, label what they can do, and review every change |
@@ -467,6 +470,7 @@ All of it in [docs/integrations.md](docs/integrations.md).
 | `status` | Show the gateway's state at a glance |
 | `tail [flags]` | Watch tool calls scroll by, live |
 | `test [file...] [flags]` | Run the policy tests: calls, and the decisions they have to get |
+| `top [flags]` | Watch the gateway live: sessions, tools and decisions |
 | `ui [flags]` | Browse the audit log in a browser |
 | `unfreeze` | Lift the kill switch |
 | `uninstall [host...] [flags]` | Take agentgate out from in front of a host's MCP servers |

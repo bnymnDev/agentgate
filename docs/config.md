@@ -327,6 +327,13 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--log-level` | log level: debug, info, warn or error | `info` |
 | `-c, --config` | path to agentgate.yaml (default: ./agentgate.yaml, then ~/.agentgate/agentgate.yaml) |  |
 
+### `anchor [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--json` | print the statement and results as JSON |  |
+| `--to` | a destination; repeatable, replaces audit.anchor.to |  |
+
 ### `canary list [flags]`
 
 | Flag | What it does | Default |
@@ -391,7 +398,10 @@ config checks for it on every call. `agentgate status` prints the path.
 |---|---|---|
 | `--check` | exit 1 if any tool is new, changed, removed, unpinned or flagged |  |
 | `--color` | colour the output: auto, always or never | `auto` |
+| `--compare` | compare with a registry: a directory, a base URL, or one entry file |  |
 | `--json` | print the reports as JSON |  |
+| `--publish` | write what is trusted into a registry directory |  |
+| `--trust-matching` | with --compare, trust every definition the registry has exactly as offered |  |
 | `--trust` | trust a tool as it is offered now, as upstream.tool; '*' trusts everything (repeatable) |  |
 
 ### `mock <session-id> [flags]`
@@ -431,6 +441,12 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--json` | print the report as JSON |  |
 | `--only-allowed` | skip calls that were denied when they were recorded |  |
 
+### `report <session-id | last> [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `-o, --output` | write to this file instead of stdout |  |
+
 ### `run [flags]`
 
 | Flag | What it does | Default |
@@ -439,6 +455,18 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--http` | serve MCP over Streamable HTTP on this address, e.g. :3333 |  |
 | `--stdio` | serve MCP on stdin/stdout (the default) |  |
 | `--ui` | also serve the web UI on this address, e.g. 127.0.0.1:7777 |  |
+
+### `scan [-- command [args...]] [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--badge` | also print a shields.io badge with the verdict, for a README |  |
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--env` | an environment variable for the server, as NAME=value (repeatable) |  |
+| `--fail-on` | finding (exit 1 when something is found) or none | `finding` |
+| `--format` | text, json, sarif or markdown | `text` |
+| `--header` | a header for --http, as "Name: value" (repeatable) |  |
+| `--http` | scan the Streamable HTTP server at this URL |  |
 
 ### `sessions [flags]`
 
@@ -557,6 +585,15 @@ config checks for it on every call. `agentgate status` prints the path.
 | `--missing-ok` | succeed when no file is named and the default test file does not exist |  |
 | `--run` | only the tests whose names match this regular expression |  |
 
+### `top [flags]`
+
+| Flag | What it does | Default |
+|---|---|---|
+| `--color` | colour the output: auto, always or never | `auto` |
+| `--interval` | how often to refresh | `1s` |
+| `--once` | print one frame and exit |  |
+| `--window` | how far back to look | `1h0m0s` |
+
 ### `ui [flags]`
 
 | Flag | What it does | Default |
@@ -575,6 +612,7 @@ config checks for it on every call. `agentgate status` prints the path.
 | Flag | What it does | Default |
 |---|---|---|
 | `--anchor` | a head printed by an earlier verify, as seq:hash, that must still be in the chain |  |
+| `--anchors` | a file of anchors, or an ots: directory, every one of which must still be in the chain; repeatable |  |
 | `--json` | print the report as JSON |  |
 | `--missing-ok` | succeed when there is no audit database yet, instead of failing |  |
 <!-- END:flags -->
