@@ -1,0 +1,64 @@
+name: Team pilot
+description: Put agentgate in front of your team's agents, with help setting it up
+title: "Team pilot: "
+labels: ["lead", "team-pilot"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        agentgate is open source and stays that way. A team pilot is for teams that want
+        help rolling it out: a policy written and fuzzed for your agents and servers, a
+        registry of the server definitions you trust, approvals in your chat with a
+        two-person rule or passkeys, and the audit trail wired into what you already watch.
+
+        **This form opens a public issue.** Leave out anything confidential; the details
+        can follow in private.
+  - type: input
+    id: team
+    attributes:
+      label: Team or company
+      description: Optional. How you would like to be named in this issue.
+  - type: dropdown
+    id: size
+    attributes:
+      label: How many people run AI agents with tool access?
+      options:
+        - "1 to 5"
+        - "6 to 25"
+        - "26 to 100"
+        - "more than 100"
+    validations:
+      required: true
+  - type: checkboxes
+    id: hosts
+    attributes:
+      label: Where do the agents run?
+      options:
+        - label: Claude Code or Claude Desktop
+        - label: Cursor, Windsurf or VS Code
+        - label: Gemini CLI or another CLI agent
+        - label: In CI (GitHub Actions, GitLab, others)
+        - label: Our own agent or framework
+  - type: checkboxes
+    id: needs
+    attributes:
+      label: What do you need most?
+      options:
+        - label: A policy for our agents, tested and fuzzed
+        - label: Approvals with a two-person rule or passkeys
+        - label: A team registry of trusted MCP server definitions
+        - label: An audit trail we can show to security or compliance
+        - label: Cost control for agents (money budget)
+        - label: Commercial support with a response time
+  - type: textarea
+    id: context
+    attributes:
+      label: What are the agents doing, and what worries you?
+      description: The servers they use, the incident you want to prevent, the review you have to pass.
+    validations:
+      required: true
+  - type: input
+    id: contact
+    attributes:
+      label: How to reach you privately
+      description: Optional. A work address or a profile link; otherwise we answer here.

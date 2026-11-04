@@ -7,7 +7,7 @@ body:
       value: |
         Before filing, have a look at the Status section of the README. Some things are
         left out on purpose: asking a model whether a call is safe, central or multi-user
-        management, governing prompts and resources, and authentication in front of the web UI.
+        management, and authentication in front of the web UI.
   - type: textarea
     id: problem
     attributes:

@@ -594,6 +594,20 @@ Changes between releases are listed in [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
+## For teams
+
+agentgate is open source under the GPL and every feature in this README is in
+it. Teams that want help putting it in front of their agents can apply for a
+**team pilot**: a policy written for your agents and servers and checked with
+`agentgate fuzz`, a registry of the server definitions you trust, approvals in
+your chat with a two-person rule or passkeys, and the audit trail wired into
+what you already watch.
+
+[Apply for a team pilot](https://github.com/bnymnDev/agentgate/issues/new?template=team-pilot.yml)
+— the form opens a public issue, so leave out anything confidential.
+
+---
+
 ## Status
 
 v0.5. Everything in this README is implemented and covered by tests,
