@@ -46,6 +46,11 @@ func TestAnchor(t *testing.T) {
 	out = e.run(t, "verify", "--anchors", anchors)
 	require.Contains(t, out, "2 of 2 are still part of the chain")
 
+	html := e.run(t, "report", "last")
+	require.Contains(t, html, "Session report")
+	require.Contains(t, html, "demo__echo")
+	require.Contains(t, html, "Intact.")
+
 	// Cut the last call off: the chain is consistent, the anchor is not.
 	db, err := sql.Open("sqlite", e.auditPath)
 	require.NoError(t, err)

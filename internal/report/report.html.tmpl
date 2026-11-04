@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agentgate session {{.Session.ID}}</title>
+<style>
+:root {
+  --bg: #fbfbfa; --fg: #1d1d1b; --muted: #6b6b66; --line: #e3e2de; --card: #ffffff;
+  --allow: #2f7d4f; --deny: #b42318; --error: #a15c07; --shadow: #6e56cf;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #161615; --fg: #ecebe8; --muted: #9b9a95; --line: #2e2d2a; --card: #1e1e1c;
+    --allow: #5cc489; --deny: #f97066; --error: #f5b041; --shadow: #a594f9; }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; }
+h2 { font-size: 16px; margin: 36px 0 12px; }
+.sub { color: var(--muted); margin: 0; }
+.mono, code, pre { font-family: var(--mono); font-size: 13px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; margin-top: 24px; }
+.tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.tile b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.tile span { color: var(--muted); font-size: 13px; }
+.strip { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; }
+.strip svg { width: 100%; height: 36px; display: block; }
+.legend { display: flex; gap: 16px; color: var(--muted); font-size: 13px; margin-top: 6px; flex-wrap: wrap; }
+.dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: 0; }
+.allow { --c: var(--allow); } .deny { --c: var(--deny); } .error { --c: var(--error); } .shadow { --c: var(--shadow); }
+.dot, rect { background: var(--c); fill: var(--c); }
+table { width: 100%; border-collapse: collapse; background: var(--card); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-weight: 600; font-size: 13px; color: var(--muted); }
+tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.badge { display: inline-block; padding: 0 7px; border-radius: 4px; font-size: 12px; font-weight: 600; color: var(--c); border: 1px solid var(--c); }
+details { margin-top: 4px; }
+summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 6px 0 0; max-height: 360px; overflow: auto; }
+.reason { color: var(--muted); }
+.ok { color: var(--allow); font-weight: 600; } .bad { color: var(--deny); font-weight: 600; }
+.wrap { overflow-x: auto; }
+footer { margin-top: 48px; color: var(--muted); font-size: 13px; }
+</style>
+</head>
+<body>
+<main>
+<h1>Session report</h1>
+<p class="sub mono">{{.Session.ID}}</p>
+<p class="sub">{{if .Session.HostName}}{{.Session.HostName}} {{.Session.HostVersion}} &middot; {{end}}{{if .Session.DownstreamTransport}}{{.Session.DownstreamTransport}} &middot; {{end}}started {{local .Session.StartedAt}} &middot; {{.Duration.Round 1000000000}}</p>
+
+<div class="tiles">
+  <div class="tile"><b>{{len .Calls}}</b><span>calls</span></div>
+  <div class="tile"><b>{{.Allowed}}</b><span>allowed</span></div>
+  <div class="tile"><b>{{.Denied}}</b><span>denied</span></div>
+  <div class="tile"><b>{{.Asked}}</b><span>asked a human</span></div>
+  {{if .Shadow}}<div class="tile"><b>{{.Shadow}}</b><span>would be denied (shadow)</span></div>{{end}}
+  <div class="tile"><b>{{.Errors}}</b><span>errors</span></div>
+  <div class="tile"><b>{{.Tokens}}</b><span>tokens, estimated</span></div>
+</div>
+
+{{if .Calls}}
+<h2>Timeline</h2>
+<div class="strip">
+<svg viewBox="0 0 1000 36" preserveAspectRatio="none" role="img" aria-label="calls over the session">
+{{range .Marks}}<rect class="{{.Class}}" x="{{printf "%.1f" .X}}" y="4" width="3" height="28"><title>{{.Title}}</title></rect>{{end}}
+</svg>
+</div>
+<div class="legend"><span><i class="dot allow"></i>allowed</span><span><i class="dot deny"></i>denied</span><span><i class="dot error"></i>error</span><span><i class="dot shadow"></i>shadow</span></div>
+{{end}}
+
+{{if .Labels}}
+<h2>What the session touched</h2>
+<p>{{range $i, $l := .Labels}}{{if $i}}, {{end}}<code>{{$l}}</code>{{end}}</p>
+{{end}}
+
+{{if .Stopped}}
+<h2>What was stopped</h2>
+<div class="wrap"><table>
+<tr><th>When</th><th>Tool</th><th>Rule</th><th>Why</th></tr>
+{{range .Stopped}}<tr><td class="mono">{{offset $.Session.StartedAt .TS}}</td><td class="mono">{{.Tool}}</td><td class="mono">{{.RuleID}}</td><td>{{.Reason}}</td></tr>
+{{end}}</table></div>
+{{end}}
+
+{{if .Tools}}
+<h2>Tools</h2>
+<div class="wrap"><table>
+<tr><th>Tool</th><th class="num">Calls</th><th class="num">Denied</th><th class="num">Errors</th><th class="num">Time</th></tr>
+{{range .Tools}}<tr><td class="mono">{{.Name}}</td><td class="num">{{.Calls}}</td><td class="num">{{.Denied}}</td><td class="num">{{.Errors}}</td><td class="num">{{ms .TotalMS}}</td></tr>
+{{end}}</table></div>
+{{end}}
+
+<h2>Integrity</h2>
+{{if .Chain}}
+<p>{{if .ChainOK}}<span class="ok">Intact.</span> No call of this session has been changed, removed or reordered since it was recorded.{{else}}<span class="bad">Broken.</span> The audit chain does not hold for this session:{{end}}</p>
+{{range .ChainProblems}}<p class="mono">seq {{.Seq}} {{.What}}</p>{{end}}
+{{if .FirstSeq}}<p class="reason">Calls are links {{.FirstSeq}} to {{.LastSeq}} of the chain; its head was <code>{{.Chain.Head}}</code> when this report was made. <code>agentgate verify --anchor {{.Chain.Head}}</code> checks it again later.</p>{{end}}
+{{else}}
+<p class="reason">The audit chain was not checked for this report.</p>
+{{end}}
+
+<h2>Calls</h2>
+<div class="wrap"><table>
+<tr><th>When</th><th>Tool</th><th>Decision</th><th class="num">Time</th></tr>
+{{range .Calls}}<tr>
+<td class="mono">{{offset $.Session.StartedAt .TS}}</td>
+<td><span class="mono">{{.Tool}}</span>{{if .Reason}}<div class="reason">{{.Reason}}{{if .RuleID}} &middot; <code>{{.RuleID}}</code>{{end}}</div>{{end}}{{if .Labels}}<div class="reason">labels: {{join .Labels ", "}}</div>{{end}}{{if .Error}}<div class="reason">error: {{.Error}}</div>{{end}}
+{{if .Args}}<details><summary>arguments</summary><pre>{{pretty .Args}}</pre></details>{{end}}
+{{if .Result}}<details><summary>result{{if .ResultTruncated}} (truncated){{end}}</summary><pre>{{pretty .Result}}</pre></details>{{end}}
+</td>
+<td><span class="badge {{decision .}}">{{if .Shadow}}shadow {{end}}{{.Decision}}</span></td>
+<td class="num">{{ms .DurationMS}}</td>
+</tr>
+{{end}}</table></div>
+
+<footer>Made by agentgate {{.Version}} on {{local .Now}} from the audit log. Arguments and results are shown as they were stored, after redaction.</footer>
+</main>
+</body>
+</html>
