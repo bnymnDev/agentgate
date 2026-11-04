@@ -46,6 +46,11 @@ func TestAnchor(t *testing.T) {
 	out = e.run(t, "verify", "--anchors", anchors)
 	require.Contains(t, out, "2 of 2 are still part of the chain")
 
+	top := e.run(t, "top", "--once", "--color", "never")
+	require.Contains(t, top, "agentgate top  running")
+	require.Contains(t, top, "demo__echo")
+	require.Contains(t, top, "calls 3")
+
 	html := e.run(t, "report", "last")
 	require.Contains(t, html, "Session report")
 	require.Contains(t, html, "demo__echo")
