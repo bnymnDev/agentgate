@@ -97,6 +97,6 @@ jobs:
 
       # SLSA build provenance for every file the checksum list covers:
       #   gh attestation verify agentgate_<version>_linux_amd64.tar.gz --repo bnymnDev/agentgate
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-checksums: ./dist/checksums.txt
